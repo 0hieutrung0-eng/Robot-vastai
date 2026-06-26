@@ -2,70 +2,85 @@ import requests
 import time
 import json
 
-# --- CẤU HÌNH THÔNG SỐ ---
+# ====================== CẤU HÌNH ======================
 VAST_API_KEY = "fdf12c0dad8dc53d40e18bd0ebfd39834f46944396b697e4d173a1418476f219"
-MAX_PRICE = 0.15  # Giá trần tối đa ($/giờ)
+MAX_PRICE = 0.15          # $/giờ
+MIN_RELIABILITY = 0.90
+MIN_INET_DOWN = 600
+MIN_CUDA = 11.8
 
-# SỬA CHUẨN: Địa chỉ API chính xác theo tài liệu nhà phát triển của Vast.ai
-BASE_URL = "https://vast.ai"
-headers = {
+BASE_URL = "https://console.vast.ai/api/v0"
+HEADERS = {
     "Accept": "application/json",
     "Content-Type": "application/json",
     "Authorization": f"Bearer {VAST_API_KEY}"
 }
 
-print("[START] Khởi động robot săn GPU phổ thông cào dữ liệu AI 24/7...")
+print("[START] Robot săn GPU Vast.ai 24/7 - Phiên bản 2026 ✅")
 
 while True:
     try:
-        print(f"\n[INFO] Đang quét Vast.ai vào lúc: {time.strftime('%X')}...")
+        print(f"\n[INFO] Quét lúc {time.strftime('%X')}...")
 
-        # 1. TÌM KIẾM MÁY PHÙ HỢP
-        search_url = f"{BASE_URL}/bundles/"
+        # ================== 1. TÌM MÁY ==================
         search_payload = {
-            "q": f"rentprice < {MAX_PRICE} inet_down > 600 reliability > 0.90 cuda_vers >= 11.8 rented=false",
-            "order": [["rentprice", "asc"]]
+            "type": "on-demand",           # hoặc "bid" nếu muốn rẻ hơn
+            "rentable": {"eq": True},
+            "rented": {"eq": False},
+            "verified": {"eq": True},
+            "reliability": {"gte": MIN_RELIABILITY},
+            "inet_down": {"gte": MIN_INET_DOWN},
+            "cuda_max_good": {"gte": MIN_CUDA},
+            "dph_total": {"lte": MAX_PRICE},   # quan trọng nhất
+            "order": [["dph_total", "asc"]],   # rẻ nhất trước
+            "limit": 5
         }
-        
-        # SỬA CHUẨN: Ép sang chuỗi text JSON thô qua data=json.dumps để không bị API từ chối
-        response = requests.post(search_url, headers=headers, data=json.dumps(search_payload))
 
-        if response.status_code == 200:
-            offers = response.json().get("offers", [])
+        resp = requests.post(f"{BASE_URL}/bundles/", headers=HEADERS, json=search_payload)
 
-            if offers:
-                # Bóc tách phần tử đầu tiên trong mảng kết quả trả về
-                best_offer = offers[0] 
-                offer_id = best_offer["id"]
-                actual_price = best_offer["rentprice"]
-                print(f"[OK] Tìm thấy GPU giá rẻ! ID Lượt chào: {offer_id} (Giá: {actual_price}$/h). Đang tự động thuê...")
+        if resp.status_code != 200:
+            print(f"[X] Lỗi API {resp.status_code}: {resp.text[:200]}")
+            time.sleep(60)
+            continue
 
-                # 2. TIẾN HÀNH THUÊ MÁY
-                rent_url = f"{BASE_URL}/asks/{offer_id}/"
-                rent_payload = {
-                    "image": "gradients/scraper-agent:latest",
-                    "env": {
-                        "TOKEN": "rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3"
-                    },
-                    "disk": 10.0,
-                    "runtype": "args"
-                }
+        offers = resp.json().get("offers", [])
 
-                rent_res = requests.post(rent_url, headers=headers, data=json.dumps(rent_payload))
-
-                if rent_res.status_code == 200:
-                    result_data = rent_res.json()
-                    instance_id = result_data.get("new_contract", "Không rõ ID")
-                    print(f"[🎉] THUÊ THÀNH CÔNG! Mã hợp đồng thực thể mới: {instance_id}")
-                else:
-                    print(f"[X] Thuê thất bại. Mã lỗi API: {rent_res.status_code} - {rent_res.text}")
-            else:
-                print("[X] Chưa tìm thấy máy cấu hình phổ thông nào phù hợp với mức giá yêu cầu.")
+        if not offers:
+            print("[X] Chưa có máy nào dưới giá trần.")
         else:
-            print(f"[X] Lỗi truy vấn kho máy. Mã trạng thái HTTP: {response.status_code} - {response.text[:200]}")
+            best = offers[0]
+            offer_id = best["id"]
+            price = best.get("dph_total") or best.get("rentprice")
+            gpu = best.get("gpu_name", "Unknown")
+
+            print(f"[🎯] Tìm thấy! {gpu} - ${price}/h - ID: {offer_id}")
+            print(f"    Reliability: {best.get('reliability')}, Inet: {best.get('inet_down')} MB/s")
+
+            # ================== 2. THUÊ MÁY ==================
+            rent_payload = {
+                "image": "gradients/scraper-agent:latest",
+                "env": {
+                    "TOKEN": "rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3"
+                },
+                "disk": 10.0,
+                "runtype": "args"          # giữ nguyên như code cũ của bạn
+            }
+
+            rent_resp = requests.put(
+                f"{BASE_URL}/asks/{offer_id}/",
+                headers=HEADERS,
+                json=rent_payload
+            )
+
+            if rent_resp.status_code in (200, 201):
+                data = rent_resp.json()
+                instance_id = data.get("new_contract")
+                print(f"[🎉] THUÊ THÀNH CÔNG! Instance ID: {instance_id}")
+                # Có thể break hoặc continue tùy bạn muốn thuê nhiều máy
+            else:
+                print(f"[X] Thuê thất bại {rent_resp.status_code}: {rent_resp.text[:150]}")
 
     except Exception as e:
-        print(f"[💥 CRASH] Gặp lỗi logic phần mềm hoặc kết nối: {type(e).__name__} - {e}")
+        print(f"[💥] Lỗi: {e}")
 
-    # Chờ 5 phút trước khi thực hiện chu kỳ quét tiếp theo
-    time.sleep(300)
+    time.sleep(300)  # 5 phút
