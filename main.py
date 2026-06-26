@@ -4,7 +4,7 @@ import time
 
 VAST_API_KEY = os.getenv("VAST_API_KEY", "").strip()
 MAX_PRICE = 0.25
-MAX_INSTANCES = 1
+MAX_INSTANCES = 1   # Chỉ duy nhất 1 máy
 
 BASE_URL = "https://console.vast.ai/api/v0"
 HEADERS = {
@@ -12,7 +12,7 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-print("[START] Robot Vast.ai - Fix CUDA Version")
+print("[START] Robot Vast.ai - Chỉ giữ DUY NHẤT 1 GPU")
 
 def get_instances():
     try:
@@ -25,26 +25,31 @@ while True:
     instances = get_instances()
     running_count = sum(1 for inst in instances if str(inst.get("status", "")).lower() == "running")
 
-    print(f"\n[CHECK] Máy đang chạy tốt: {running_count}/{MAX_INSTANCES}")
+    print(f"\n[CHECK] Số máy đang chạy: {running_count}")
 
-    # Destroy máy lỗi
+    # === Destroy tất cả máy thừa hoặc lỗi ===
     for inst in instances:
         inst_id = inst.get("id")
         status = str(inst.get("status", "")).lower()
-        if status != "running":
-            print(f"   🗑️ Destroy máy lỗi/kẹt: {inst.get('gpu_name')} (ID: {inst_id})")
+        gpu = inst.get("gpu_name", "Unknown")
+
+        # Destroy nếu là máy lỗi hoặc nếu đang có nhiều hơn 1 máy
+        if status != "running" or len(instances) > MAX_INSTANCES:
+            print(f"   🗑️ Destroy: {gpu} (ID: {inst_id}) - Status: {status}")
             try:
                 requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS)
             except:
                 pass
-            time.sleep(15)
+            time.sleep(12)
 
+    # Nếu đã có đúng 1 máy chạy tốt thì nghỉ
     if running_count >= MAX_INSTANCES:
-        print("[✅] Đủ máy → Nghỉ 10 phút")
-        time.sleep(600)
+        print("[✅] Đã có đúng 1 máy đang chạy → Nghỉ 8 phút")
+        time.sleep(480)
         continue
 
-    print("[🔍] Tìm máy RTX 3090...")
+    # Tìm và thuê máy mới
+    print("[🔍] Đang tìm máy RTX 3090...")
 
     search_payload = {
         "rentable": {"eq": True},
@@ -73,9 +78,10 @@ apt-get update && apt-get install -y git python3-pip
 
 git config --global credential.helper ''
 git config --global --add safe.directory /app
+unset GIT_ASKPASS
 
 echo "Đang clone..."
-git clone --depth 1 https://github.com/gradients-io/scraper-agent.git /app
+git clone --depth 1 https://github.com/gradients-io/scraper-agent.git /app || git clone https://github.com/gradients-io/scraper-agent.git /app
 
 cd /app
 echo "Cài requirements..."
@@ -85,13 +91,13 @@ export TOKEN="rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3"
 echo "=== Agent Started $(date) ==="
 
 nohup python3 main.py > agent.log 2>&1 &
-echo "✅ Agent đang chạy - Xem log: tail -f agent.log"
+echo "✅ Agent đang chạy nền"
 
 sleep infinity
 """
 
             rent_payload = {
-                "image": "nvidia/cuda:12.1.1-runtime-ubuntu22.04",   # ← Đổi sang 12.1
+                "image": "nvidia/cuda:12.1.1-runtime-ubuntu22.04",
                 "env": {"TOKEN": "rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3"},
                 "disk": 40.0,
                 "runtype": "ssh_direct",
@@ -105,8 +111,7 @@ sleep infinity
                 time.sleep(900)
             else:
                 print(f"[❌] Thuê thất bại: {rent_resp.status_code}")
-                print(rent_resp.text[:500])
-                time.sleep(60)
+                time.sleep(30)
     except Exception as e:
         print(f"[ERROR] {e}")
 
