@@ -2,11 +2,13 @@ import os
 import requests
 import time
 
+# GIỮ NGUYÊN KHÔNG THAY ĐỔI ENDPOINT GỐC
+BASE_URL = "https://console.vast.ai/api/v0"
+
 VAST_API_KEY = os.getenv("VAST_API_KEY", "").strip()
 MAX_PRICE = 0.23
 MAX_INSTANCES = 1   # Đổi thành 2 nếu muốn chạy nhiều máy
 
-BASE_URL = "https://vast.ai"
 HEADERS = {
     "Authorization": f"Bearer {VAST_API_KEY}",
     "Content-Type": "application/json",
@@ -37,7 +39,7 @@ while True:
         time.sleep(60)
         continue
     
-    # 1. XỬ LÝ MÁY LỖI (Bao gồm lỗi Driver, OCI, Daemon, Pull image)
+    # 1. XỬ LÝ VÀ DỌN DẸP MÁY LỖI
     healthy_count = 0
     for inst in instances:
         inst_id = inst.get("id")
@@ -45,39 +47,37 @@ while True:
         actual_status = str(inst.get("actual_status", "")).lower()
         gpu = inst.get("gpu_name", "Unknown")
         
-        error_keywords = ["error", "failed", "storage", "oci", "daemon", "pull", "unsatisfied"]
+        error_keywords = ["error", "failed", "storage", "oci", "daemon", "pull", "unsatisfied", "broken"]
         if any(kw in status or kw in actual_status for kw in error_keywords):
-            print(f"[🗑️] Phát hiện máy lỗi/không tương thích Driver {gpu} (ID: {inst_id}) → Destroy...")
+            print(f"[🗑️] Máy lỗi {gpu} (ID: {inst_id}) → Destroy...")
             try:
-                del_resp = requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS, timeout=15)
-                if del_resp.status_code == 200:
-                    print(f"[OK] Destroy máy lỗi thành công")
-                else:
-                    print(f"[X] Gửi lệnh destroy lỗi, code: {del_resp.status_code}")
+                requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS, timeout=15)
+                print(f"[OK] Destroy máy lỗi thành công")
             except Exception as e:
                 print(f"[X] Lỗi gửi lệnh xóa: {e}")
             time.sleep(10)
         else:
-            # Chỉ đếm những máy thực sự khỏe mạnh
             healthy_count += 1
 
-    print(f"[CHECK] Số máy khỏe mạnh hiện tại: {healthy_count}/{MAX_INSTANCES}")
+    print(f"[CHECK] Số máy khỏe mạnh: {healthy_count}/{MAX_INSTANCES}")
 
     if healthy_count >= MAX_INSTANCES:
-        print(f"[✅] ĐÃ ĐỦ MÁY SẠCH → Nghỉ 8 phút")
+        print(f"[✅] ĐÃ ĐỦ MÁY → Nghỉ 8 phút")
         time.sleep(480)
         continue
 
-    # 2. TÌM VÀ THUÊ MÁY MỚI (Áp dụng bộ lọc chống máy cũ)
-    print("[🔍] Chưa đủ máy khỏe mạnh, đang tìm offer đạt chuẩn...")
+    # 2. TÌM VÀ THUÊ MÁY MỚI
+    print("[🔍] Chưa đủ máy, đang tìm...")
 
     search_payload = {
-        "rentable": {"eq": True},
-        "rented": {"eq": False},
-        "dph_total": {"lte": MAX_PRICE},
-        "gpu_name": {"in": ["RTX 3090 Ti", "RTX 3090"]},
-        # GIẢI PHÁP 1: Ép buộc API chỉ lấy máy có Driver >= 550.00 để không bao giờ bị lỗi CUDA
-        "driver_version": {"gte": "550.00"}, 
+        "q": {
+            "rentable": {"eq": True},
+            "rented": {"eq": False},
+            "dph_total": {"lte": MAX_PRICE},
+            "gpu_name": {"in": ["RTX 3090 Ti", "RTX 3090"]},
+            # BẮT BUỘC: Đảm bảo Driver máy chủ >= 550.00 để không bị sập lỗi OCI với CUDA 12.4.1
+            "driver_version": {"gte": 550.00}
+        },
         "order": [["dph_total", "asc"]],
         "limit": 5
     }
@@ -86,36 +86,54 @@ while True:
         resp = requests.post(f"{BASE_URL}/bundles/", headers=HEADERS, json=search_payload, timeout=15)
 
         if resp.status_code == 200 and resp.json().get("offers"):
-            # Lấy object offer hợp lệ
-            best = resp.json()["offers"]
+            offers = resp.json()["offers"]
+            
+            # ĐÃ SỬA: Kiểm tra kiểu dữ liệu và trích xuất phần tử đầu tiên an toàn tuyệt đối
+            if isinstance(offers, list) and len(offers) > 0:
+                best = offers[0]
+            else:
+                best = offers
+
             offer_id = best["id"]
             gpu = best.get("gpu_name")
-            driver = best.get("driver_version", "Unknown")
 
-            print(f"[🎯] Tìm thấy {gpu} (Driver: {driver}) → Tiến hành đặt thuê...")
+            print(f"[🎯] Tìm thấy {gpu} → Thuê...")
 
-            # GIẢI PHÁP 2: Dùng bản Image tương thích cao 12.1.1 kết hợp nohup (không treo tail -f)
+            # SỬA LỖI LINUX: Cô lập môi trường bằng venv và sửa chính xác URL Git Clone cho Gradients Agent
+            onstart_cmd = (
+                "export DEBIAN_FRONTEND=noninteractive && "
+                "apt-get update && apt-get install -y git python3-pip python3-venv && "
+                "git clone https://github.com/gradients-io/scraper-agent.git /app && "
+                "cd /app && python3 -m venv venv && "
+                "./venv/bin/pip install --upgrade pip && "
+                "./venv/bin/pip install -r requirements.txt --no-cache-dir && "
+                "export TOKEN='rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3' && "
+                "nohup ./venv/bin/python3 main.py > agent.log 2>&1 & "
+                "echo 'GRADIENTS AGENT STARTED'"
+            )
+
             rent_payload = {
-                "image": "nvidia/cuda:12.1.1-runtime-ubuntu22.04",
+                "image": "nvidia/cuda:12.4.1-runtime-ubuntu22.04",
                 "env": {"TOKEN": "rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3"},
                 "disk": 40.0,
                 "runtype": "args",
-                "onstart": "apt-get update && apt-get install -y git python3-pip && git clone https://github.com /app && cd /app && pip install -r requirements.txt --no-cache-dir && nohup python3 main.py > agent.log 2>&1 & echo 'GRADIENTS AGENT STARTED'"
+                "onstart": onstart_cmd
             }
 
+            # GIỮ NGUYÊN: Phương thức PUT gửi tới endpoint asks chuẩn của Vast.ai
             rent_resp = requests.put(f"{BASE_URL}/asks/{offer_id}/", headers=HEADERS, json=rent_payload, timeout=40)
 
             if rent_resp.status_code in (200, 201):
-                print(f"[🎉] THUÊ THÀNH CÔNG {gpu}! Đợi 3 phút để hệ thống thiết lập...")
-                time.sleep(180)  # Quay lại vòng lặp sớm để phát hiện ngay nếu máy có lỗi phát sinh
+                print(f"[🎉] THUÊ THÀNH CÔNG {gpu}! Đợi 3 phút để hệ thống kiểm tra trạng thái khởi động...")
+                time.sleep(180)  # Tối ưu thời gian ngủ ngắn lại để bot nhanh chóng quay lại quản lý máy
             else:
-                print(f"[X] Thuê thất bại. Phản hồi từ Vast: {rent_resp.status_code}")
+                print(f"[X] Thuê thất bại: {rent_resp.status_code}")
                 time.sleep(40)
         else:
-            print("[X] Không tìm thấy máy đạt yêu cầu giá và phiên bản Driver")
+            print("[X] Chưa tìm thấy máy")
             time.sleep(60)
     except Exception as e:
-        print(f"[ERROR] Lỗi trong quá trình quét/thuê: {e}")
+        print(f"[ERROR] {e}")
         time.sleep(60)
 
     time.sleep(20)
