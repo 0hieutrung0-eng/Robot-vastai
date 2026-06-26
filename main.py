@@ -7,45 +7,39 @@ MAX_PRICE = 0.23
 MAX_INSTANCES = 1
 
 BASE_URL = "https://console.vast.ai/api/v0"
-
-# Thêm User-Agent để bypass bộ lọc Cloudflare của Vast.ai
 HEADERS = {
     "Authorization": f"Bearer {VAST_API_KEY}",
     "Content-Type": "application/json",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    "Accept": "application/json"
 }
 
-print("[START] Robot - Kiểm soát VGA chặt chẽ")
+print(f"[START] Robot kiểm soát chặt - Max {MAX_INSTANCES} máy")
 
 def get_running_count():
     try:
-        r = requests.get(f"{BASE_URL}/instances/", headers=HEADERS, timeout=20)
-        if r.status_code == 200:
-            count = len(r.json().get("instances", []))
-            print(f"[API] Hiện có {count}/{MAX_INSTANCES} máy")
-            return count, True # Trả về số lượng và xác nhận API chạy đúng
-        else:
-            print(f"[API Error] Thất bại, HTTP Code: {r.status_code}")
+        # Thử cả v0 và v1
+        for version in ["", "/v1"]:
+            url = f"https://console.vast.ai/api{version}/instances/"
+            r = requests.get(url, headers=HEADERS, timeout=20)
+            print(f"[API {version or 'v0'}] Status: {r.status_code}")
+            if r.status_code == 200:
+                count = len(r.json().get("instances", []))
+                print(f"[✅ API OK] Hiện có {count}/{MAX_INSTANCES} máy")
+                return count
+        return 0
     except Exception as e:
-        print(f"[API Error] Lỗi kết nối/JSON: {e}")
-    return 0, False # API lỗi thì báo False để không xử lý bậy
+        print(f"[API Error] {e}")
+        return 0
 
 while True:
-    # 1. KIỂM TRA SỐ LƯỢNG MÁY TRƯỚC
-    count, is_api_ok = get_running_count()
-    
-    if not is_api_ok:
-        print("[⚠️] Không thể kiểm tra số máy do lỗi API. Thử lại sau 60 giây...")
-        time.sleep(60)
+    running = get_running_count()
+
+    if running >= MAX_INSTANCES:
+        print(f"[✅] ĐÃ ĐỦ {MAX_INSTANCES} máy → Nghỉ 10 phút")
+        time.sleep(600)
         continue
 
-    if count >= MAX_INSTANCES:
-        print(f"[✅] ĐÃ THUÊ {count}/{MAX_INSTANCES} VGA ĐANG CHẠY → DỪNG THUÊ. Nghỉ 5 phút...")
-        time.sleep(300)
-        continue # Quay lại đầu vòng lặp, bỏ qua hoàn toàn đoạn code thuê máy bên dưới
-
-    # 2. TIẾN HÀNH TÌM MÁY NẾU CHƯA CÓ VGA NÀO CHẠY
-    print("[🔍] Đang tìm máy...")
+    print(f"[🔍] Chưa đủ máy ({running}/{MAX_INSTANCES}), đang tìm...")
 
     search_payload = {
         "rentable": {"eq": True},
@@ -66,34 +60,26 @@ while True:
 
             print(f"[🎯] Tìm thấy {gpu} → Thuê...")
 
-            # XOÁ BỎ tail -f ở cuối để tránh treo tiến trình Vast.ai
-            onstart_cmd = (
-                "apt-get update && apt-get install -y git python3-pip && "
-                "git clone https://github.com/gradients-io/scraper-agent.git /app && "
-                "cd /app && pip install -r requirements.txt --no-cache-dir && "
-                "nohup python3 main.py > agent.log 2>&1 & echo 'Agent started thành công'"
-            )
-
             rent_payload = {
                 "image": "nvidia/cuda:12.4.1-runtime-ubuntu22.04",
                 "env": {"TOKEN": "rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3"},
                 "disk": 40.0,
                 "runtype": "args",
-                "onstart": onstart_cmd
+                "onstart": "apt-get update && apt-get install -y git python3-pip && git clone https://github.com/gradients-io/scraper-agent.git /app && cd /app && pip install -r requirements.txt --no-cache-dir && nohup python3 main.py > agent.log 2>&1 & echo 'GRADIENTS AGENT STARTED'"
             }
 
             rent_resp = requests.put(f"{BASE_URL}/asks/{offer_id}/", headers=HEADERS, json=rent_payload, timeout=40)
 
             if rent_resp.status_code in (200, 201):
-                print(f"[🎉] THUÊ THÀNH CÔNG {gpu}! Đợi 3 phút để kiểm tra lại trạng thái...")
-                time.sleep(180) # Giảm sleep xuống 3 phút để bot cập nhật danh sách máy nhanh hơn
+                print(f"[🎉] THUÊ THÀNH CÔNG {gpu}!")
+                time.sleep(900)
             else:
                 print(f"[X] Thuê thất bại: {rent_resp.status_code}")
-                time.sleep(30)
         else:
-            print("[X] Chưa tìm thấy máy phù hợp")
-            time.sleep(30)
-            
+            print("[X] Chưa tìm thấy máy")
+            time.sleep(60)
     except Exception as e:
-        print(f"[X] Lỗi hệ thống trong vòng lặp: {e}")
-        time.sleep(30)
+        print(f"[ERROR] {e}")
+        time.sleep(60)
+
+    time.sleep(30)
