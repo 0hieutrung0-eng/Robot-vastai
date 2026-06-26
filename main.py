@@ -43,7 +43,7 @@ while True:
             "rented": {"eq": False},
             "reliability": {"gte": 0.92},
             "dph_total": {"lte": MAX_PRICE},
-            "gpu_name": {"in": ["RTX 3090 Ti"]},
+            "gpu_name": {"in": ["RTX 3090 Ti","RTX 3090"]},
             "order": [["dph_total", "asc"]],
             "limit": 10
         }
