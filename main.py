@@ -12,7 +12,7 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-print("[START] Robot Vast.ai - Phiên bản ổn định nhất")
+print("[START] Robot Vast.ai - Fix CUDA Version")
 
 def get_instances():
     try:
@@ -27,12 +27,12 @@ while True:
 
     print(f"\n[CHECK] Máy đang chạy tốt: {running_count}/{MAX_INSTANCES}")
 
-    # Destroy máy lỗi / kẹt
+    # Destroy máy lỗi
     for inst in instances:
         inst_id = inst.get("id")
         status = str(inst.get("status", "")).lower()
         if status != "running":
-            print(f"   🗑️ Destroy máy kẹt: {inst.get('gpu_name')} (ID: {inst_id})")
+            print(f"   🗑️ Destroy máy lỗi/kẹt: {inst.get('gpu_name')} (ID: {inst_id})")
             try:
                 requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS)
             except:
@@ -66,8 +66,7 @@ while True:
 
             print(f"[🎯] Tìm thấy {gpu} → Thuê...")
 
-            # ===================== ONSTART SẠCH =====================
-            onstart_cmd = r"""set -e
+            onstart_cmd = """set -e
 echo "=== OnStart bắt đầu $(date) ==="
 
 apt-get update && apt-get install -y git python3-pip
@@ -75,7 +74,7 @@ apt-get update && apt-get install -y git python3-pip
 git config --global credential.helper ''
 git config --global --add safe.directory /app
 
-echo "Đang clone repository..."
+echo "Đang clone..."
 git clone --depth 1 https://github.com/gradients-io/scraper-agent.git /app
 
 cd /app
@@ -86,13 +85,13 @@ export TOKEN="rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3"
 echo "=== Agent Started $(date) ==="
 
 nohup python3 main.py > agent.log 2>&1 &
-echo "✅ Agent đang chạy nền - Kiểm tra bằng: tail -f agent.log"
+echo "✅ Agent đang chạy - Xem log: tail -f agent.log"
 
 sleep infinity
 """
 
             rent_payload = {
-                "image": "nvidia/cuda:12.4.1-runtime-ubuntu22.04",
+                "image": "nvidia/cuda:12.1.1-runtime-ubuntu22.04",   # ← Đổi sang 12.1
                 "env": {"TOKEN": "rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3"},
                 "disk": 40.0,
                 "runtype": "ssh_direct",
