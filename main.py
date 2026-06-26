@@ -4,7 +4,7 @@ import time
 
 VAST_API_KEY = os.getenv("VAST_API_KEY", "").strip()
 MAX_PRICE = 0.25
-MAX_INSTANCES = 1
+MAX_INSTANCES = 1   # Chỉ giữ tối đa 1 máy
 
 BASE_URL = "https://console.vast.ai/api/v0"
 HEADERS = {
@@ -12,7 +12,7 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-print("[START] Robot Vast.ai tự động - Phiên bản sửa lỗi OnStart")
+print("[START] Robot Vast.ai - Chỉ thuê tối đa 1 GPU")
 
 def get_instances():
     try:
@@ -23,33 +23,44 @@ def get_instances():
         pass
     return []
 
+def is_running(inst):
+    """Chỉ tính là running khi máy thực sự hoạt động"""
+    status = str(inst.get("status", "")).lower()
+    if status == "running":
+        return True
+    # Đang creating/starting thì chưa tính là running
+    return False
+
 while True:
     instances = get_instances()
-    running = len(instances)
-    print(f"[CHECK] Hiện có {running}/{MAX_INSTANCES} máy đang chạy")
+    
+    # Đếm số máy thực sự đang chạy
+    running_count = sum(1 for inst in instances if is_running(inst))
+    
+    print(f"[CHECK] Máy thực sự đang chạy: {running_count}/{MAX_INSTANCES}")
 
-    # Kiểm tra và destroy máy lỗi
+    # === Destroy máy lỗi hoặc không chạy được ===
     for inst in instances:
         inst_id = inst.get("id")
-        status = inst.get("status", "")
+        status = str(inst.get("status", "")).lower()
         gpu = inst.get("gpu_name", "Unknown")
-        
-        if "error" in status.lower() or "failed" in status.lower():
-            print(f"[🗑️] Phát hiện máy lỗi {gpu} (ID: {inst_id}) → Destroy...")
+
+        if any(x in status for x in ["error", "failed", "crashed", "not running"]):
+            print(f"[🗑️] Destroy máy lỗi/không chạy: {gpu} (ID: {inst_id}) - Status: {status}")
             try:
                 requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS)
-                print(f"[OK] Đã destroy máy lỗi {inst_id}")
-            except Exception as e:
-                print(f"[Lỗi destroy] {e}")
-            time.sleep(30)
+            except:
+                pass
+            time.sleep(20)
 
-    if running >= MAX_INSTANCES:
-        print(f"[✅] Đủ {MAX_INSTANCES} máy → Nghỉ 10 phút")
+    # Nếu đã đủ 1 máy đang chạy thật thì nghỉ
+    if running_count >= MAX_INSTANCES:
+        print(f"[✅] Đã đủ {MAX_INSTANCES} máy đang chạy → Nghỉ 10 phút")
         time.sleep(600)
         continue
 
-    # Tìm máy mới
-    print("[🔍] Đang tìm máy phù hợp...")
+    # === Tìm và thuê máy mới ===
+    print("[🔍] Đang tìm máy RTX 3090 series...")
 
     search_payload = {
         "rentable": {"eq": True},
@@ -62,22 +73,23 @@ while True:
 
     try:
         resp = requests.post(f"{BASE_URL}/bundles/", headers=HEADERS, json=search_payload, timeout=15)
+        offers = resp.json().get("offers", []) if resp.status_code == 200 else []
 
-        if resp.status_code == 200 and resp.json().get("offers"):
-            best = resp.json()["offers"][0]
+        if offers:
+            best = offers[0]
             offer_id = best["id"]
-            gpu = best.get("gpu_name", "Unknown GPU")
+            gpu = best.get("gpu_name", "Unknown")
 
-            print(f"[🎯] Tìm thấy {gpu} → Đang thuê...")
+            print(f"[🎯] Tìm thấy {gpu} → Thuê...")
 
-            # ================== ONSTART ĐÃ SỬA ==================
             onstart_cmd = """set -e
+echo "=== OnStart bắt đầu $(date) ==="
 apt-get update && apt-get install -y git python3-pip
-git clone https://github.com/gradients-io/scraper-agent.git /app || echo "Clone failed"
+git clone https://github.com/gradients-io/scraper-agent.git /app
 cd /app
 pip install -r requirements.txt --no-cache-dir
 export TOKEN="rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3"
-echo "=== Agent started at $(date) ==="
+echo "=== Agent Started $(date) ==="
 nohup python3 main.py > agent.log 2>&1 &
 sleep infinity"""
 
@@ -85,19 +97,19 @@ sleep infinity"""
                 "image": "nvidia/cuda:12.4.1-runtime-ubuntu22.04",
                 "env": {"TOKEN": "rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3"},
                 "disk": 40.0,
-                "runtype": "ssh_direct",      # ← Quan trọng
+                "runtype": "ssh_direct",
                 "onstart": onstart_cmd
             }
 
-            rent_resp = requests.put(f"{BASE_URL}/asks/{offer_id}/", headers=HEADERS, json=rent_payload, timeout=40)
+            rent_resp = requests.put(f"{BASE_URL}/asks/{offer_id}/", headers=HEADERS, json=rent_payload, timeout=45)
 
             if rent_resp.status_code in (200, 201):
                 print(f"[🎉] THUÊ THÀNH CÔNG {gpu}!")
-                time.sleep(900)   # Chờ 15 phút trước khi check lại
+                time.sleep(900)   # Chờ 15 phút
             else:
-                print(f"[❌] Thuê thất bại - Code: {rent_resp.status_code}")
-                print(rent_resp.text)
-                time.sleep(40)
+                print(f"[❌] Thuê thất bại: {rent_resp.status_code}")
+                print(rent_resp.text[:400])
+                time.sleep(60)
         else:
             print("[😴] Không tìm thấy máy phù hợp")
             time.sleep(60)
