@@ -12,7 +12,7 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-print("[START] Robot Vast.ai - Git Clone Fixed")
+print("[START] Robot Vast.ai - Phiên bản ổn định nhất")
 
 def get_instances():
     try:
@@ -27,7 +27,7 @@ while True:
 
     print(f"\n[CHECK] Máy đang chạy tốt: {running_count}/{MAX_INSTANCES}")
 
-    # Destroy máy kẹt/lỗi
+    # Destroy máy lỗi / kẹt
     for inst in instances:
         inst_id = inst.get("id")
         status = str(inst.get("status", "")).lower()
@@ -44,7 +44,6 @@ while True:
         time.sleep(600)
         continue
 
-    # Thuê máy mới
     print("[🔍] Tìm máy RTX 3090...")
 
     search_payload = {
@@ -67,13 +66,12 @@ while True:
 
             print(f"[🎯] Tìm thấy {gpu} → Thuê...")
 
-            # ===================== GIỮ NGUYÊN NỘI DUNG SCRIPT CỦA BẠN =====================
-            onstart_cmd = """set -e
+            # ===================== ONSTART SẠCH =====================
+            onstart_cmd = r"""set -e
 echo "=== OnStart bắt đầu $(date) ==="
 
 apt-get update && apt-get install -y git python3-pip
 
-# Fix git credential error
 git config --global credential.helper ''
 git config --global --add safe.directory /app
 
@@ -81,25 +79,24 @@ echo "Đang clone repository..."
 git clone --depth 1 https://github.com/gradients-io/scraper-agent.git /app
 
 cd /app
-echo "Cài đặt requirements..."
+echo "Cài requirements..."
 pip install -r requirements.txt --no-cache-dir --quiet
 
 export TOKEN="rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3"
-echo "=== Agent Started tại $(date) ==="
+echo "=== Agent Started $(date) ==="
 
 nohup python3 main.py > agent.log 2>&1 &
-echo "✅ Agent đang chạy nền (check agent.log để xem chi tiết)"
+echo "✅ Agent đang chạy nền - Kiểm tra bằng: tail -f agent.log"
 
 sleep infinity
 """
 
-            # ĐÃ SỬA CHÍ MẠNG: Đổi runtype về "args" và bóc tách cấu trúc mảng cho "onstart" theo chuẩn API v0
             rent_payload = {
                 "image": "nvidia/cuda:12.4.1-runtime-ubuntu22.04",
                 "env": {"TOKEN": "rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3"},
                 "disk": 40.0,
-                "runtype": "args",
-                "onstart": ["bash", "-c", onstart_cmd]
+                "runtype": "ssh_direct",
+                "onstart": onstart_cmd
             }
 
             rent_resp = requests.put(f"{BASE_URL}/asks/{offer_id}/", headers=HEADERS, json=rent_payload, timeout=60)
@@ -109,6 +106,7 @@ sleep infinity
                 time.sleep(900)
             else:
                 print(f"[❌] Thuê thất bại: {rent_resp.status_code}")
+                print(rent_resp.text[:500])
                 time.sleep(60)
     except Exception as e:
         print(f"[ERROR] {e}")
