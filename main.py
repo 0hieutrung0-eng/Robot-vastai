@@ -3,9 +3,8 @@ import requests
 import time
 
 VAST_API_KEY = os.getenv("VAST_API_KEY", "").strip()
-MAX_PRICE = 0.25    # Giữ mức giá thực tế để có máy tốt
+MAX_PRICE = 0.35    # Đảm bảo bao phủ mức giá $0.229 - $0.269 thực tế trong ảnh
 MAX_INSTANCES = 1   
-
 
 BASE_URL = "https://console.vast.ai/api/v1"
 HEADERS = {
@@ -15,7 +14,7 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 }
 
-print(f"[START] Robot quét liên tục - Max {MAX_INSTANCES} máy")
+print(f"[START] Robot săn máy tốc độ cao - Max {MAX_INSTANCES} máy")
 
 def get_instances():
     try:
@@ -33,8 +32,8 @@ while True:
         instances, is_api_ok = get_instances()
         
         if not is_api_ok:
-            print("[⚠️] Lỗi kết nối API Vast.ai. Thử lại sau 15 giây...")
-            time.sleep(15)
+            print("[⚠️] Lỗi kết nối API Vast.ai. Thử lại sau 10 giây...")
+            time.sleep(10)
             continue
         
         # 1. KIỂM TRA VÀ DỌN DẸP MÁY LỖI
@@ -58,14 +57,13 @@ while True:
             else:
                 healthy_count += 1
 
-        # Nếu đã đủ số lượng máy khỏe mạnh, bot sẽ nghỉ 8 phút
         if healthy_count >= MAX_INSTANCES:
             print(f"[✅] ĐÃ ĐỦ MÁY KHỎE MẠNH ({healthy_count}/{MAX_INSTANCES}) → Nghỉ 8 phút...")
             time.sleep(480)
             continue
 
-        # 2. QUÉT LIÊN TỤC NẾU CHƯA TÌM ĐƯỢC MÁY
-        print(f"[🔍] Chưa đủ máy ({healthy_count}/{MAX_INSTANCES}) → Đang quét tìm máy trên sàn...")
+        # 2. QUÉT LIÊN TỤC KHÔNG NGỪNG NẾU THIẾU MÁY
+        print(f"[🔍] Chưa đủ máy ({healthy_count}/{MAX_INSTANCES}) → Đang tìm kiếm trên sàn...")
 
         search_payload = {
             "q": {
@@ -86,12 +84,14 @@ while True:
             offers = res_json.get("offers", []) if isinstance(res_json, dict) else res_json
             
             if isinstance(offers, list) and len(offers) > 0:
+                # ================= SỬA LỖI CHÍ MẠNG TẠI ĐÂY =================
+                # Lấy phần tử đầu tiên [0] của danh sách thay vì lấy cả cụm list
                 best = offers[0]
                 offer_id = best["id"]
                 gpu = best.get("gpu_name")
                 price = best.get("dph_total")
 
-                print(f"[🎯] KHỚP MÁY: {gpu} ({price}$/h) (ID: {offer_id}) → Gửi lệnh thuê...")
+                print(f"[🎯] KHỚP MÁY: {gpu} ({price}$/h) (ID: {offer_id}) → Tiến hành đặt thuê...")
 
                 onstart_cmd = (
                     "export DEBIAN_FRONTEND=noninteractive && "
@@ -117,22 +117,20 @@ while True:
                 rent_resp = requests.put(f"{BASE_URL}/asks/{offer_id}/", headers=HEADERS, json=rent_payload, timeout=30)
 
                 if rent_resp.status_code in (200, 201):
-                    print(f"[🎉] THUÊ THÀNH CÔNG {gpu}! Đợi 3 phút để hệ thống cài đặt cấu hình...")
+                    print(f"[🎉] THUÊ THÀNH CÔNG MÁY {gpu}! Chờ 3 phút để hệ thống setup...")
                     time.sleep(180)   
                 else:
-                    print(f"[X] Host từ chối lệnh thuê: {rent_resp.status_code}. Tiếp tục quét lại...")
-                    time.sleep(3) # Chờ ngắn rồi quét tiếp máy khác
+                    print(f"[X] Host từ chối thuê (Mã lỗi: {rent_resp.status_code}). Thử lại...")
+                    time.sleep(3)
             else:
-                # KHI KHÔNG TÌM THẤY MÁY: Giảm sleep xuống 1-2 giây để lặp lại chu kỳ quét ngay lập tức
-                print("[⏳] Không có máy trống thỏa mãn bộ lọc. Đang lặp lại lệnh quét ngay...")
+                print("[⏳] Không có máy trống thỏa mãn bộ lọc. Quét lại ngay lập tức...")
                 time.sleep(1)
         else:
             print(f"[X] Lỗi API Tìm kiếm ({resp.status_code})")
             time.sleep(5)
 
     except Exception as e:
-        print(f"[⚙️ Hệ thống] Gặp lỗi: {e}")
-        time.sleep(5)
+        print(f"[⚙️ Lỗi Vòng Lặp] {e}")
+        time.sleep(3)
 
-    # Khoảng đệm rất ngắn giữa các vòng lặp tránh gây nghẽn CPU của Render
     time.sleep(1)
