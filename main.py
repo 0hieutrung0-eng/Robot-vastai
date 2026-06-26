@@ -3,10 +3,13 @@ import requests
 import time
 
 VAST_API_KEY = os.getenv("VAST_API_KEY", "").strip()
-MAX_PRICE = 0.35    # Đảm bảo bao phủ mức giá $0.229 - $0.269 thực tế trong ảnh
+MAX_PRICE = 0.35    # Đảm bảo bao phủ mức giá $0.229 - $0.269 thực tế trên sàn
 MAX_INSTANCES = 1   
 
-BASE_URL = "https://console.vast.ai/api/v1"
+# SỬA LỖI GỐC: Tách biệt chính xác hai hệ thống Endpoint của Vast.ai
+SYSTEM_URL = "https://console.vast.ai/api/v1"  # Dành cho quản lý máy và đặt thuê
+SEARCH_URL = "https://vllm.vast.ai/api/v1"     # BẮT BUỘC dành riêng cho lọc tìm máy (/bundles)
+
 HEADERS = {
     "Authorization": f"Bearer {VAST_API_KEY}",
     "Content-Type": "application/json",
@@ -14,11 +17,12 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 }
 
-print(f"[START] Robot săn máy tốc độ cao - Max {MAX_INSTANCES} máy")
+print(f"[START] Robot săn máy Vast.ai chuẩn hóa - Max {MAX_INSTANCES} máy")
 
 def get_instances():
     try:
-        r = requests.get(f"{BASE_URL}/instances/", headers=HEADERS, timeout=12)
+        # Lấy danh sách máy chạy qua SYSTEM_URL
+        r = requests.get(f"{SYSTEM_URL}/instances/", headers=HEADERS, timeout=12)
         if r.status_code == 200:
             return r.json().get("instances", []), True
         else:
@@ -36,7 +40,7 @@ while True:
             time.sleep(10)
             continue
         
-        # 1. KIỂM TRA VÀ DỌN DẸP MÁY LỖI
+        # 1. KIỂM TRA VÀ DỌN DẸP MÁY LỖI KẸT
         healthy_count = 0
         for inst in instances:
             inst_id = inst.get("id")
@@ -49,7 +53,7 @@ while True:
             if any(kw in status or kw in actual_status or kw in status_msg for kw in error_keywords):
                 print(f"[🗑️] Máy lỗi kẹt {gpu} (ID: {inst_id}) → Destroy gấp...")
                 try:
-                    requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS, timeout=10)
+                    requests.delete(f"{SYSTEM_URL}/instances/{inst_id}/", headers=HEADERS, timeout=10)
                     print(f"[OK] Đã dọn dẹp xong máy lỗi {inst_id}")
                 except Exception as e:
                     print(f"[X] Lỗi xóa máy: {e}")
@@ -77,15 +81,15 @@ while True:
             "limit": 3
         }
 
-        resp = requests.post(f"{BASE_URL}/bundles/", headers=HEADERS, json=search_payload, timeout=12)
+        # Gọi API tìm kiếm thông qua SEARCH_URL (vllm.vast.ai)
+        resp = requests.post(f"{SEARCH_URL}/bundles/", headers=HEADERS, json=search_payload, timeout=12)
 
         if resp.status_code == 200:
             res_json = resp.json()
             offers = res_json.get("offers", []) if isinstance(res_json, dict) else res_json
             
             if isinstance(offers, list) and len(offers) > 0:
-                # ================= SỬA LỖI CHÍ MẠNG TẠI ĐÂY =================
-                # Lấy phần tử đầu tiên [0] của danh sách thay vì lấy cả cụm list
+                # Trích xuất chuẩn xác thông tin phần tử đầu tiên ngon nhất trong mảng
                 best = offers[0]
                 offer_id = best["id"]
                 gpu = best.get("gpu_name")
@@ -114,19 +118,20 @@ while True:
                     "onstart": onstart_cmd
                 }
 
-                rent_resp = requests.put(f"{BASE_URL}/asks/{offer_id}/", headers=HEADERS, json=rent_payload, timeout=30)
+                # Gửi lệnh đặt thuê thông qua SYSTEM_URL (console.vast.ai)
+                rent_resp = requests.put(f"{SYSTEM_URL}/asks/{offer_id}/", headers=HEADERS, json=rent_payload, timeout=30)
 
                 if rent_resp.status_code in (200, 201):
-                    print(f"[🎉] THUÊ THÀNH CÔNG MÁY {gpu}! Chờ 3 phút để hệ thống setup...")
+                    print(f"[🎉] THUÊ THÀNH CÔNG MÁY {gpu}! Chờ 3 phút hệ thống nạp...")
                     time.sleep(180)   
                 else:
-                    print(f"[X] Host từ chối thuê (Mã lỗi: {rent_resp.status_code}). Thử lại...")
+                    print(f"[X] Host từ chối cắn lệnh (Mã: {rent_resp.status_code}). Tiếp tục quét lại...")
                     time.sleep(3)
             else:
                 print("[⏳] Không có máy trống thỏa mãn bộ lọc. Quét lại ngay lập tức...")
                 time.sleep(1)
         else:
-            print(f"[X] Lỗi API Tìm kiếm ({resp.status_code})")
+            print(f"[X] Lỗi API Tìm kiếm ({resp.status_code}) - Vui lòng kiểm tra lại VAST_API_KEY")
             time.sleep(5)
 
     except Exception as e:
