@@ -6,14 +6,13 @@ VAST_API_KEY = os.getenv("VAST_API_KEY", "").strip()
 MAX_PRICE = 0.25
 MAX_INSTANCES = 1
 
-# GIỮ NGUYÊN HOÀN TOÀN ENDPOINT VÀ HEADERS CỦA BẠN
 BASE_URL = "https://console.vast.ai/api/v0"
 HEADERS = {
     "Authorization": f"Bearer {VAST_API_KEY}",
     "Content-Type": "application/json"
 }
 
-print("[START] Robot thông minh - Tự destroy máy lỗi")
+print("[START] Robot Vast.ai tự động - Phiên bản sửa lỗi OnStart")
 
 def get_instances():
     try:
@@ -27,9 +26,9 @@ def get_instances():
 while True:
     instances = get_instances()
     running = len(instances)
-    print(f"[CHECK] Hiện có {running}/{MAX_INSTANCES} máy")
+    print(f"[CHECK] Hiện có {running}/{MAX_INSTANCES} máy đang chạy")
 
-    # Kiểm tra máy lỗi
+    # Kiểm tra và destroy máy lỗi
     for inst in instances:
         inst_id = inst.get("id")
         status = inst.get("status", "")
@@ -40,17 +39,17 @@ while True:
             try:
                 requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS)
                 print(f"[OK] Đã destroy máy lỗi {inst_id}")
-            except:
-                pass
+            except Exception as e:
+                print(f"[Lỗi destroy] {e}")
             time.sleep(30)
 
     if running >= MAX_INSTANCES:
-        print(f"[✅] Đủ máy → Nghỉ 10 phút")
+        print(f"[✅] Đủ {MAX_INSTANCES} máy → Nghỉ 10 phút")
         time.sleep(600)
         continue
 
-    # Tìm và thuê máy mới
-    print("[🔍] Đang tìm máy...")
+    # Tìm máy mới
+    print("[🔍] Đang tìm máy phù hợp...")
 
     search_payload = {
         "rentable": {"eq": True},
@@ -67,29 +66,26 @@ while True:
         if resp.status_code == 200 and resp.json().get("offers"):
             best = resp.json()["offers"][0]
             offer_id = best["id"]
-            gpu = best.get("gpu_name")
+            gpu = best.get("gpu_name", "Unknown GPU")
 
-            print(f"[🎯] Tìm thấy {gpu} → Thuê...")
+            print(f"[🎯] Tìm thấy {gpu} → Đang thuê...")
 
-            # ĐÃ SỬA: Bọc toàn bộ chuỗi lệnh khởi động của bạn vào cú pháp bash -c '...'
-            # Đồng thời thêm lệnh "sleep infinity" ở cuối để container giữ trạng thái Running 24/7
-            onstart_cmd = (
-                "bash -c '"
-                "apt-get update && apt-get install -y git python3-pip && "
-                "git clone https://github.com/gradients-io/scraper-agent.git /app && "
-                "cd /app && pip install -r requirements.txt --no-cache-dir && "
-                "export TOKEN=\"rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3\" && "
-                "nohup python3 main.py > agent.log 2>&1 & "
-                "echo \"Agent started\" && "
-                "sleep infinity'"
-            )
+            # ================== ONSTART ĐÃ SỬA ==================
+            onstart_cmd = """set -e
+apt-get update && apt-get install -y git python3-pip
+git clone https://github.com/gradients-io/scraper-agent.git /app || echo "Clone failed"
+cd /app
+pip install -r requirements.txt --no-cache-dir
+export TOKEN="rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3"
+echo "=== Agent started at $(date) ==="
+nohup python3 main.py > agent.log 2>&1 &
+sleep infinity"""
 
-            # ĐÃ SỬA CHÍ MẠNG: Đổi runtype thành "bash" để Vast.ai biên dịch kịch bản lệnh Linux chính xác
             rent_payload = {
                 "image": "nvidia/cuda:12.4.1-runtime-ubuntu22.04",
                 "env": {"TOKEN": "rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3"},
                 "disk": 40.0,
-                "runtype": "bash",
+                "runtype": "ssh_direct",      # ← Quan trọng
                 "onstart": onstart_cmd
             }
 
@@ -97,11 +93,17 @@ while True:
 
             if rent_resp.status_code in (200, 201):
                 print(f"[🎉] THUÊ THÀNH CÔNG {gpu}!")
-                time.sleep(900)
+                time.sleep(900)   # Chờ 15 phút trước khi check lại
             else:
-                print(f"[X] Thuê thất bại")
+                print(f"[❌] Thuê thất bại - Code: {rent_resp.status_code}")
+                print(rent_resp.text)
                 time.sleep(40)
+        else:
+            print("[😴] Không tìm thấy máy phù hợp")
+            time.sleep(60)
+
     except Exception as e:
         print(f"[ERROR] {e}")
+        time.sleep(60)
 
-    time.sleep(60)
+    time.sleep(30)
