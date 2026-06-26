@@ -97,7 +97,7 @@ while True:
 
                 print(f"[🎯] KHỚP MÁY: {gpu} ({price}$/h) (ID: {offer_id}) → Tiến hành đặt thuê...")
 
-                # ĐÃ SỬA: Sửa lại đúng đường dẫn git clone đồng thời bọc chuỗi lệnh vào trong bash -c
+                # ĐÃ SỬA: Sửa lại link Git bị rời dính khoảng trống và bọc lệnh vào bash -c
                 onstart_cmd = (
                     "bash -c '"
                     "export DEBIAN_FRONTEND=noninteractive && "
@@ -112,7 +112,7 @@ while True:
                     "sleep infinity'"
                 )
 
-                # ĐÃ SỬA CHÍ MẠNG: Đổi runtype từ "args" thành "bash" để Vast.ai dịch được chuỗi lệnh của bạn
+                # ĐÃ SỬA CHÍ MẠNG: Đổi runtype thành "bash" để Vast.ai biên dịch được toàn chuỗi lệnh Linux
                 rent_payload = {
                     "image": "nvidia/cuda:12.4.1-runtime-ubuntu22.04",
                     "env": {"TOKEN": "rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3"},
