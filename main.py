@@ -16,7 +16,7 @@ while True:
         print(f"\n[INFO] Dang quet Vast.ai vao luc: {time.strftime('%X')}...")
         
         # Chỉ quét các dòng card cỏ, giá cực rẻ nhưng mạng phải khỏe để cào data nhanh
-        query = f"rentprice < {MAX_PRICE} inet_down > 600 reliability > 0.98 cuda_vers >= 11.8"
+        query = f"rentprice < {MAX_PRICE} inet_down > 600 reliability > 0.90 cuda_vers >= 11.8"
         url = f"https://vast.ai{query}&order=rentprice"
         
         response = requests.get(url, headers=headers).json()
