@@ -21,11 +21,11 @@ while True:
         search_url = f"{BASE_URL}/bundles/"
         search_payload = {
             "q": {
-                "rentprice": {"lt": MAX_PRICE},
-                "inet_down": {"gt": 600},
-                "reliability": {"gt": 0.90},
-                "cuda_vers": {"gte": 11.8},
-                "rented": {"eq": False}
+                "rentprice_lt": MAX_PRICE,          # Giá nhỏ hơn MAX_PRICE
+                "inet_down_gt": 600,                # Tốc độ tải xuống lớn hơn 600 Mbps
+                "reliability_gt": 0.90,             # Độ ổn định lớn hơn 90%
+                "cuda_vers_gte": 11.8,              # Phiên bản CUDA lớn hơn hoặc bằng 11.8
+                "rented_bool": False                # Máy chưa có ai thuê
             },
             "order": [["rentprice", "asc"]]
         }
