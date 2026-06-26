@@ -1,13 +1,15 @@
 import requests
 import time
+import json
 
 # --- CẤU HÌNH THÔNG SỐ ---
 VAST_API_KEY = "fdf12c0dad8dc53d40e18bd0ebfd39834f46944396b697e4d173a1418476f219"
 MAX_PRICE = 0.15  # Giá trần tối đa ($/giờ)
 
-BASE_URL = "https://console.vast.ai/api/v0"
+BASE_URL = "https://vast.ai"
 headers = {
-    "Accept": "application/json", 
+    "Accept": "application/json",
+    "Content-Type": "application/json",
     "Authorization": f"Bearer {VAST_API_KEY}"
 }
 
@@ -23,13 +25,15 @@ while True:
             "q": f"rentprice < {MAX_PRICE} inet_down > 600 reliability > 0.90 cuda_vers >= 11.8 rented=false",
             "order": [["rentprice", "asc"]]
         }
-        response = requests.post(search_url, headers=headers, json=search_payload)
+        
+        # SỬA CHUẨN: Ép kiểu dữ liệu sang chuỗi JSON thuần túy bằng json.dumps và truyền qua tham số data=
+        response = requests.post(search_url, headers=headers, data=json.dumps(search_payload))
 
         if response.status_code == 200:
             offers = response.json().get("offers", [])
 
             if offers:
-                # ĐÃ SỬA: Lấy phần tử index số 0 trong danh sách kết quả trả về
+                # Lấy phần tử index số 0 trong danh sách kết quả trả về
                 best_offer = offers[0] 
                 offer_id = best_offer["id"]
                 actual_price = best_offer["rentprice"]
@@ -46,7 +50,7 @@ while True:
                     "runtype": "args"
                 }
 
-                rent_res = requests.post(rent_url, headers=headers, json=rent_payload)
+                rent_res = requests.post(rent_url, headers=headers, data=json.dumps(rent_payload))
 
                 if rent_res.status_code == 200:
                     result_data = rent_res.json()
@@ -60,7 +64,6 @@ while True:
             print(f"[X] Lỗi truy vấn kho máy. Mã trạng thái HTTP: {response.status_code} - {response.text}")
 
     except Exception as e:
-        # ĐÃ BỔ SUNG: In chi tiết lỗi hệ thống ra terminal để bạn dễ theo dõi tracker
         print(f"[💥 CRASH] Gặp lỗi logic phần mềm hoặc kết nối: {type(e).__name__} - {e}")
 
     # Chờ 5 phút trước khi thực hiện chu kỳ quét tiếp theo
