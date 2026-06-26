@@ -4,7 +4,7 @@ import time
 
 VAST_API_KEY = os.getenv("VAST_API_KEY", "").strip()
 MAX_PRICE = 0.25
-MAX_INSTANCES = 1   # Chỉ duy nhất 1 máy
+MAX_INSTANCES = 1   # ← Quan trọng: chỉ giữ đúng 1 máy
 
 BASE_URL = "https://console.vast.ai/api/v0"
 HEADERS = {
@@ -12,7 +12,7 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-print("[START] Robot Vast.ai - Chỉ giữ DUY NHẤT 1 GPU")
+print("[START] Robot Vast.ai - CHỈ DUY NHẤT 1 GPU")
 
 def get_instances():
     try:
@@ -25,30 +25,29 @@ while True:
     instances = get_instances()
     running_count = sum(1 for inst in instances if str(inst.get("status", "")).lower() == "running")
 
-    print(f"\n[CHECK] Số máy đang chạy: {running_count}")
+    print(f"\n[CHECK] Máy đang chạy tốt: {running_count}/{MAX_INSTANCES} | Tổng máy: {len(instances)}")
 
-    # === Destroy tất cả máy thừa hoặc lỗi ===
+    # === DESTROY MÁY THỪA HOẶC LỖI ===
     for inst in instances:
         inst_id = inst.get("id")
         status = str(inst.get("status", "")).lower()
         gpu = inst.get("gpu_name", "Unknown")
 
-        # Destroy nếu là máy lỗi hoặc nếu đang có nhiều hơn 1 máy
+        # Destroy nếu: máy lỗi HOẶC đang có nhiều hơn 1 máy
         if status != "running" or len(instances) > MAX_INSTANCES:
-            print(f"   🗑️ Destroy: {gpu} (ID: {inst_id}) - Status: {status}")
+            print(f"   🗑️ Destroy máy: {gpu} (ID: {inst_id}) - Status: {status}")
             try:
                 requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS)
             except:
                 pass
             time.sleep(12)
 
-    # Nếu đã có đúng 1 máy chạy tốt thì nghỉ
     if running_count >= MAX_INSTANCES:
-        print("[✅] Đã có đúng 1 máy đang chạy → Nghỉ 8 phút")
+        print(f"[✅] ĐÃ CÓ ĐÚNG 1 MÁY → Nghỉ 8 phút")
         time.sleep(480)
         continue
 
-    # Tìm và thuê máy mới
+    # === THUÊ MÁY MỚI ===
     print("[🔍] Đang tìm máy RTX 3090...")
 
     search_payload = {
@@ -72,16 +71,18 @@ while True:
             print(f"[🎯] Tìm thấy {gpu} → Thuê...")
 
             onstart_cmd = """set -e
-echo "=== OnStart bắt đầu $(date) ==="
+echo "=== OnStart $(date) ==="
 
 apt-get update && apt-get install -y git python3-pip
 
 git config --global credential.helper ''
 git config --global --add safe.directory /app
-unset GIT_ASKPASS
+export GIT_TERMINAL_PROMPT=0
+export GIT_ASKPASS=/bin/true
 
 echo "Đang clone..."
-git clone --depth 1 https://github.com/gradients-io/scraper-agent.git /app || git clone https://github.com/gradients-io/scraper-agent.git /app
+rm -rf /app 2>/dev/null || true
+git clone --depth 1 https://github.com/gradients-io/scraper-agent.git /app
 
 cd /app
 echo "Cài requirements..."
@@ -104,14 +105,13 @@ sleep infinity
                 "onstart": onstart_cmd
             }
 
-            rent_resp = requests.put(f"{BASE_URL}/asks/{offer_id}/", headers=HEADERS, json=rent_payload, timeout=60)
+            rent_resp = requests.put(f"{BASE_URL}/asks/{offer_id}/", headers=HEADERS, json=rent_payload, timeout=70)
 
             if rent_resp.status_code in (200, 201):
                 print(f"[🎉] THUÊ THÀNH CÔNG {gpu}!")
                 time.sleep(900)
             else:
                 print(f"[❌] Thuê thất bại: {rent_resp.status_code}")
-                time.sleep(30)
     except Exception as e:
         print(f"[ERROR] {e}")
 
