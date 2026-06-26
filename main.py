@@ -5,7 +5,7 @@ import json
 
 VAST_API_KEY = os.getenv("VAST_API_KEY", "").strip()
 MAX_PRICE = 0.15
-MAX_INSTANCES = 1
+MAX_INSTANCES = 1   # CHỈ CHO PHÉP 1 MÁY
 
 BASE_URL = "https://console.vast.ai/api/v0"
 HEADERS = {
@@ -13,28 +13,29 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-print("[START] Robot săn 3090 / 3090 Ti - Phiên bản ổn định")
+print(f"[START] Robot săn GPU - GIỚI HẠN CHẮC {MAX_INSTANCES} máy")
 
-def get_running_instances():
+def get_running_count():
     try:
-        r = requests.get(f"{BASE_URL}/instances/", headers=HEADERS, timeout=10)
+        r = requests.get(f"{BASE_URL}/instances/", headers=HEADERS, timeout=15)
         if r.status_code == 200:
-            return len(r.json().get("instances", []))
-    except:
-        pass
+            count = len(r.json().get("instances", []))
+            print(f"[CHECK] Hiện có {count} máy đang chạy")
+            return count
+    except Exception as e:
+        print(f"[WARN] Không kiểm tra được instances: {e}")
     return 0
 
 while True:
     try:
-        running = get_running_instances()
-        print(f"[INFO] Đang chạy: {running}/{MAX_INSTANCES} máy | {time.strftime('%X')}")
-
+        running = get_running_count()
+        
         if running >= MAX_INSTANCES:
-            print("[✅] Đã đủ máy → Nghỉ dài")
-            time.sleep(600)   # 10 phút
+            print(f"[⏸] ĐÃ ĐỦ {MAX_INSTANCES} máy → Nghỉ 10 phút")
+            time.sleep(600)
             continue
 
-        # Ưu tiên 3090 Ti trước, sau đó mới 3090
+        # Tìm máy
         search_payload = {
             "rentable": {"eq": True},
             "rented": {"eq": False},
@@ -53,7 +54,7 @@ while True:
             price = best.get("dph_total")
             gpu = best.get("gpu_name")
 
-            print(f"[🎯] Tìm thấy {gpu} - ${price}/h → Thuê...")
+            print(f"[🎯] Tìm thấy {gpu} ${price}/h → Đang thuê...")
 
             rent_payload = {
                 "image": "vastai/base-image:cuda-12.8.1-cudnn-devel-ubuntu22.04",
@@ -62,17 +63,17 @@ while True:
                 "runtype": "args"
             }
 
-            rent_resp = requests.put(f"{BASE_URL}/asks/{offer_id}/", headers=HEADERS, json=rent_payload, timeout=25)
+            rent_resp = requests.put(f"{BASE_URL}/asks/{offer_id}/", headers=HEADERS, json=rent_payload, timeout=30)
 
             if rent_resp.status_code in (200, 201):
                 print(f"[🎉] THUÊ THÀNH CÔNG {gpu}!")
-                time.sleep(900)
+                time.sleep(900)   # Nghỉ 15 phút sau khi thuê
             else:
-                print(f"[X] Thuê thất bại")
+                print(f"[X] Thuê thất bại: {rent_resp.status_code}")
         else:
-            print("[X] Chưa tìm thấy máy phù hợp")
+            print("[X] Chưa tìm thấy GPU phù hợp")
 
     except Exception as e:
-        print(f"[Lỗi] {e}")
+        print(f"[💥] Lỗi: {e}")
 
-    time.sleep(120)
+    time.sleep(90)
