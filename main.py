@@ -6,7 +6,7 @@ VAST_API_KEY = os.getenv("VAST_API_KEY", "").strip()
 MAX_PRICE = 0.23
 MAX_INSTANCES = 1   # Đổi thành 2 nếu bạn muốn chạy nhiều máy
 
-BASE_URL = "https://console.vast.ai/api/v0"
+BASE_URL = "https://console.vast.ai/api/v1"
 HEADERS = {
     "Authorization": f"Bearer {VAST_API_KEY}",
     "Content-Type": "application/json",
