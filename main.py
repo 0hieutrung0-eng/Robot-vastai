@@ -3,7 +3,7 @@ import time
 
 # --- CẤU HÌNH THÔNG SỐ CỦA BẠN ---
 VAST_API_KEY = "fdf12c0dad8dc53d40e18bd0ebfd39834f46944396b697e4d173a1418476f219"
-MAX_PRICE = 0.08  # CHỈ thuê card rẻ (RTX 3060/3070) giá dưới 0.08$/giờ để tối ưu gốc
+MAX_PRICE = 0.15 # CHỈ thuê card rẻ (RTX 3060/3070) giá dưới 0.08$/giờ để tối ưu gốc
 
 # LỆNH CHẠY BOT CÀO DATA AI (Thay ĐOẠN_MÃ_TOKEN_TÀI_KHOẢN bằng mã ví hoặc token của bạn trên chợ Data)
 DATA_BOT_TOKEN = "docker run -d --name ai-scraper-node -e TOKEN='rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3' --network host --gpus all gradients/scraper-agent:latest"
