@@ -9,43 +9,53 @@ MAX_INSTANCES = 1
 BASE_URL = "https://console.vast.ai/api/v0"
 HEADERS = {
     "Authorization": f"Bearer {VAST_API_KEY}",
-    "Content-Type": "application/json",
-    "Accept": "application/json"
+    "Content-Type": "application/json"
 }
 
-print(f"[START] Robot kiểm soát chặt - Max {MAX_INSTANCES} máy")
+print("[START] Robot thông minh - Tự destroy máy lỗi")
 
-def get_running_count():
+def get_instances():
     try:
-        # Thử cả v0 và v1
-        for version in ["", "/v1"]:
-            url = f"https://console.vast.ai/api{version}/instances/"
-            r = requests.get(url, headers=HEADERS, timeout=20)
-            print(f"[API {version or 'v0'}] Status: {r.status_code}")
-            if r.status_code == 200:
-                count = len(r.json().get("instances", []))
-                print(f"[✅ API OK] Hiện có {count}/{MAX_INSTANCES} máy")
-                return count
-        return 0
-    except Exception as e:
-        print(f"[API Error] {e}")
-        return 0
+        r = requests.get(f"{BASE_URL}/instances/", headers=HEADERS, timeout=20)
+        if r.status_code == 200:
+            return r.json().get("instances", [])
+    except:
+        pass
+    return []
 
 while True:
-    running = get_running_count()
+    instances = get_instances()
+    running = len(instances)
+    print(f"[CHECK] Hiện có {running}/{MAX_INSTANCES} máy")
+
+    # Kiểm tra máy lỗi
+    for inst in instances:
+        inst_id = inst.get("id")
+        status = inst.get("status", "")
+        gpu = inst.get("gpu_name", "Unknown")
+        
+        if "error" in status.lower() or "failed" in status.lower():
+            print(f"[🗑️] Phát hiện máy lỗi {gpu} (ID: {inst_id}) → Destroy...")
+            try:
+                requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS)
+                print(f"[OK] Đã destroy máy lỗi {inst_id}")
+            except:
+                pass
+            time.sleep(30)
 
     if running >= MAX_INSTANCES:
-        print(f"[✅] ĐÃ ĐỦ {MAX_INSTANCES} máy → Nghỉ 10 phút")
+        print(f"[✅] Đủ máy → Nghỉ 10 phút")
         time.sleep(600)
         continue
 
-    print(f"[🔍] Chưa đủ máy ({running}/{MAX_INSTANCES}), đang tìm...")
+    # Tìm và thuê máy mới
+    print("[🔍] Đang tìm máy...")
 
     search_payload = {
         "rentable": {"eq": True},
         "rented": {"eq": False},
         "dph_total": {"lte": MAX_PRICE},
-        "gpu_name": {"in": ["RTX 3090 Ti"]},
+        "gpu_name": {"in": ["RTX 3090 Ti", "RTX 3090"]},
         "order": [["dph_total", "asc"]],
         "limit": 5
     }
@@ -65,7 +75,7 @@ while True:
                 "env": {"TOKEN": "rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3"},
                 "disk": 40.0,
                 "runtype": "args",
-                "onstart": "apt-get update && apt-get install -y git python3-pip && git clone https://github.com/gradients-io/scraper-agent.git /app && cd /app && pip install -r requirements.txt --no-cache-dir && nohup python3 main.py > agent.log 2>&1 & echo 'GRADIENTS AGENT STARTED'"
+                "onstart": "apt-get update && apt-get install -y git python3-pip && git clone https://github.com/gradients-io/scraper-agent.git /app && cd /app && pip install -r requirements.txt --no-cache-dir && nohup python3 main.py > agent.log 2>&1 & echo 'Agent started'"
             }
 
             rent_resp = requests.put(f"{BASE_URL}/asks/{offer_id}/", headers=HEADERS, json=rent_payload, timeout=40)
@@ -74,12 +84,9 @@ while True:
                 print(f"[🎉] THUÊ THÀNH CÔNG {gpu}!")
                 time.sleep(900)
             else:
-                print(f"[X] Thuê thất bại: {rent_resp.status_code}")
-        else:
-            print("[X] Chưa tìm thấy máy")
-            time.sleep(60)
+                print(f"[X] Thuê thất bại")
+                time.sleep(40)
     except Exception as e:
         print(f"[ERROR] {e}")
-        time.sleep(60)
 
-    time.sleep(30)
+    time.sleep(60)
