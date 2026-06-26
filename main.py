@@ -20,16 +20,9 @@ while True:
         # 1. TÌM KIẾM MÁY PHÙ HỢP
         search_url = f"{BASE_URL}/bundles/"
         search_payload = {
-            "q": {
-                "rentprice_lt": MAX_PRICE,          # Giá nhỏ hơn MAX_PRICE
-                "inet_down_gt": 600,                # Tốc độ tải xuống lớn hơn 600 Mbps
-                "reliability_gt": 0.90,             # Độ ổn định lớn hơn 90%
-                "cuda_vers_gte": 11.8,              # Phiên bản CUDA lớn hơn hoặc bằng 11.8
-                "rented_bool": False                # Máy chưa có ai thuê
-            },
+            "q": f"rentprice < {MAX_PRICE} inet_down > 600 reliability > 0.90 cuda_vers >= 11.8 rented=false",
             "order": [["rentprice", "asc"]]
         }
-
         response = requests.post(search_url, headers=headers, json=search_payload)
 
         if response.status_code == 200:
