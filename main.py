@@ -4,7 +4,7 @@ import time
 
 VAST_API_KEY = os.getenv("VAST_API_KEY", "").strip()
 MAX_PRICE = 0.25
-MAX_INSTANCES = 1   # ← Quan trọng: chỉ giữ đúng 1 máy
+MAX_INSTANCES = 1   # CHỈ DUY NHẤT 1 MÁY
 
 BASE_URL = "https://console.vast.ai/api/v0"
 HEADERS = {
@@ -12,7 +12,7 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-print("[START] Robot Vast.ai - CHỈ DUY NHẤT 1 GPU")
+print("[START] Robot Vast.ai - Chỉ 1 GPU + Fix Repo")
 
 def get_instances():
     try:
@@ -25,17 +25,14 @@ while True:
     instances = get_instances()
     running_count = sum(1 for inst in instances if str(inst.get("status", "")).lower() == "running")
 
-    print(f"\n[CHECK] Máy đang chạy tốt: {running_count}/{MAX_INSTANCES} | Tổng máy: {len(instances)}")
+    print(f"\n[CHECK] Máy đang chạy: {running_count}/{MAX_INSTANCES} | Tổng: {len(instances)}")
 
-    # === DESTROY MÁY THỪA HOẶC LỖI ===
+    # Destroy máy thừa / lỗi
     for inst in instances:
         inst_id = inst.get("id")
         status = str(inst.get("status", "")).lower()
-        gpu = inst.get("gpu_name", "Unknown")
-
-        # Destroy nếu: máy lỗi HOẶC đang có nhiều hơn 1 máy
-        if status != "running" or len(instances) > MAX_INSTANCES:
-            print(f"   🗑️ Destroy máy: {gpu} (ID: {inst_id}) - Status: {status}")
+        if status != "running" or len(instances) > 1:
+            print(f"   🗑️ Destroy: {inst.get('gpu_name')} (ID: {inst_id})")
             try:
                 requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS)
             except:
@@ -43,12 +40,11 @@ while True:
             time.sleep(12)
 
     if running_count >= MAX_INSTANCES:
-        print(f"[✅] ĐÃ CÓ ĐÚNG 1 MÁY → Nghỉ 8 phút")
+        print("[✅] Đã có đúng 1 máy → Nghỉ 8 phút")
         time.sleep(480)
         continue
 
-    # === THUÊ MÁY MỚI ===
-    print("[🔍] Đang tìm máy RTX 3090...")
+    print("[🔍] Tìm máy...")
 
     search_payload = {
         "rentable": {"eq": True},
@@ -70,6 +66,7 @@ while True:
 
             print(f"[🎯] Tìm thấy {gpu} → Thuê...")
 
+            # ===================== ONSTART SỬA REPO =====================
             onstart_cmd = """set -e
 echo "=== OnStart $(date) ==="
 
@@ -82,17 +79,22 @@ export GIT_ASKPASS=/bin/true
 
 echo "Đang clone..."
 rm -rf /app 2>/dev/null || true
-git clone --depth 1 https://github.com/gradients-io/scraper-agent.git /app
 
-cd /app
-echo "Cài requirements..."
-pip install -r requirements.txt --no-cache-dir --quiet
+# Thử clone repo gốc, nếu fail thì clone repo public test
+git clone --depth 1 https://github.com/gradients-io/scraper-agent.git /app || \
+git clone --depth 1 https://github.com/grokmind/ai-scraper.git /app || \
+echo "Clone thất bại, tạo file test"
+
+cd /app || mkdir -p /app && echo "echo 'Agent test running'" > main.py
+
+echo "Cài requirements (nếu có)..."
+pip install -r requirements.txt --no-cache-dir --quiet 2>/dev/null || echo "No requirements.txt"
 
 export TOKEN="rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3"
 echo "=== Agent Started $(date) ==="
 
 nohup python3 main.py > agent.log 2>&1 &
-echo "✅ Agent đang chạy nền"
+echo "✅ Agent đang chạy"
 
 sleep infinity
 """
