@@ -4,7 +4,7 @@ import time
 import json
 
 VAST_API_KEY = os.getenv("VAST_API_KEY", "").strip()
-MAX_PRICE = 0.19
+MAX_PRICE = 0.15
 MAX_INSTANCES = 1
 
 BASE_URL = "https://console.vast.ai/api/v0"
@@ -13,7 +13,7 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-print(f"[START] Robot săn 3090 - Giới hạn {MAX_INSTANCES} máy (Fix offer expired)")
+print("[START] Robot săn 3090 / 3090 Ti - Phiên bản ổn định")
 
 def get_running_instances():
     try:
@@ -30,17 +30,17 @@ while True:
         print(f"[INFO] Đang chạy: {running}/{MAX_INSTANCES} máy | {time.strftime('%X')}")
 
         if running >= MAX_INSTANCES:
-            print("[⏸] Đủ máy → Nghỉ 5 phút")
-            time.sleep(300)
+            print("[✅] Đã đủ máy → Nghỉ dài")
+            time.sleep(600)   # 10 phút
             continue
 
-        # Tìm offer
+        # Ưu tiên 3090 Ti trước, sau đó mới 3090
         search_payload = {
             "rentable": {"eq": True},
             "rented": {"eq": False},
             "reliability": {"gte": 0.92},
             "dph_total": {"lte": MAX_PRICE},
-            "gpu_name": {"in": ["RTX 3090", "RTX 3090 Ti"]},
+            "gpu_name": {"in": ["RTX 3090 Ti", "RTX 3090"]},
             "order": [["dph_total", "asc"]],
             "limit": 10
         }
@@ -53,7 +53,7 @@ while True:
             price = best.get("dph_total")
             gpu = best.get("gpu_name")
 
-            print(f"[🎯] Tìm thấy {gpu} - ${price}/h (ID: {offer_id}) → Đang thử thuê...")
+            print(f"[🎯] Tìm thấy {gpu} - ${price}/h → Thuê...")
 
             rent_payload = {
                 "image": "vastai/base-image:cuda-12.8.1-cudnn-devel-ubuntu22.04",
@@ -68,14 +68,11 @@ while True:
                 print(f"[🎉] THUÊ THÀNH CÔNG {gpu}!")
                 time.sleep(900)
             else:
-                error_msg = rent_resp.text[:200]
-                print(f"[X] Thuê thất bại: {rent_resp.status_code} - {error_msg}")
-                if "no_such_ask" in error_msg or "not available" in error_msg:
-                    print("[!] Offer đã bị lấy mất → tiếp tục quét ngay")
+                print(f"[X] Thuê thất bại")
         else:
-            print(f"[X] Chưa tìm thấy 3090 phù hợp")
+            print("[X] Chưa tìm thấy máy phù hợp")
 
     except Exception as e:
-        print(f"[💥] Lỗi: {e}")
+        print(f"[Lỗi] {e}")
 
-    time.sleep(90)   # Quét nhanh hơn một chút
+    time.sleep(120)
