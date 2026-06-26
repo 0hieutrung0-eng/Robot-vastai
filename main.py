@@ -3,7 +3,7 @@ import requests
 import time
 
 # GIỮ NGUYÊN KHÔNG THAY ĐỔI ENDPOINT GỐC
-BASE_URL = "https://console.vast.ai/api/v0"
+BASE_URL = "https://console.vast.ai/api/v1"
 
 VAST_API_KEY = os.getenv("VAST_API_KEY", "").strip()
 MAX_PRICE = 0.23
