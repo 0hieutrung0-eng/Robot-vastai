@@ -4,7 +4,7 @@ import time
 
 VAST_API_KEY = os.getenv("VAST_API_KEY", "").strip()
 MAX_PRICE = 0.23
-MAX_INSTANCES = 1   # Thay thành 2 nếu bạn muốn chạy 2 máy
+MAX_INSTANCES = 1   # ← Đổi thành 2 nếu bạn muốn chạy 2 máy
 
 BASE_URL = "https://console.vast.ai/api/v0"
 HEADERS = {
@@ -12,28 +12,36 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-print(f"[START] Robot chống thuê lặp - Max {MAX_INSTANCES} máy")
+print(f"[START] Robot dùng API /instances/ kiểm tra - Giới hạn {MAX_INSTANCES} máy")
 
-def count_running_instances():
+def get_running_count():
+    """Sử dụng API instances để kiểm tra số máy đang chạy"""
     try:
         resp = requests.get(f"{BASE_URL}/instances/", headers=HEADERS, timeout=20)
         if resp.status_code == 200:
-            count = len(resp.json().get("instances", []))
-            print(f"[INSTANCES] Hiện đang chạy: {count}/{MAX_INSTANCES} máy")
+            instances = resp.json().get("instances", [])
+            count = len(instances)
+            print(f"[API INSTANCES] Hiện đang chạy: {count}/{MAX_INSTANCES} máy")
+            for inst in instances[:3]:  # In thông tin vài máy
+                print(f"   • {inst.get('gpu_name')} | ID: {inst.get('id')} | Status: {inst.get('status')}")
             return count
+        else:
+            print(f"[API ERROR] Status {resp.status_code}")
+            return 0
     except Exception as e:
-        print(f"[WARN] Lỗi kiểm tra instances: {e}")
-    return 0
+        print(f"[API EXCEPTION] {e}")
+        return 0
 
 while True:
-    running = count_running_instances()
+    running = get_running_count()
 
+    # Chỉ tìm và thuê khi chưa đủ máy
     if running >= MAX_INSTANCES:
-        print(f"[✅] ĐÃ ĐỦ {MAX_INSTANCES} máy → Nghỉ 12 phút")
+        print(f"[✅] ĐÃ ĐỦ MÁY → Nghỉ 12 phút")
         time.sleep(720)
         continue
 
-    print(f"[🔍] Hiện có {running} máy → Tiếp tục tìm...")
+    print(f"[🔍] Chưa đủ máy ({running}/{MAX_INSTANCES}), bắt đầu tìm offer...")
 
     # Tìm máy
     search_payload = {
@@ -43,7 +51,7 @@ while True:
         "dph_total": {"lte": MAX_PRICE},
         "gpu_name": {"in": ["RTX 3090 Ti"]},
         "order": [["dph_total", "asc"]],
-        "limit": 5
+        "limit": 6
     }
 
     resp = requests.post(f"{BASE_URL}/bundles/", headers=HEADERS, json=search_payload, timeout=15)
@@ -67,13 +75,12 @@ while True:
 
         if rent_resp.status_code in (200, 201):
             print(f"[🎉] THUÊ THÀNH CÔNG {gpu}!")
-            print("[⏳] Nghỉ 15 phút sau khi thuê thành công...")
-            time.sleep(900)        # Nghỉ dài sau khi thuê
+            time.sleep(900)   # Nghỉ dài sau khi thuê thành công
         else:
             print(f"[X] Thuê thất bại: {rent_resp.status_code}")
-            time.sleep(30)
+            time.sleep(40)
     else:
-        print("[X] Chưa tìm thấy máy phù hợp")
+        print("[X] Chưa tìm thấy offer phù hợp")
         time.sleep(60)
 
     time.sleep(30)
