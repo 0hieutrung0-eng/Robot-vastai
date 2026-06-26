@@ -6,10 +6,10 @@ import json
 VAST_API_KEY = "fdf12c0dad8dc53d40e18bd0ebfd39834f46944396b697e4d173a1418476f219"
 MAX_PRICE = 0.15  # Giá trần tối đa ($/giờ)
 
+# SỬA CHUẨN: Thay đổi URL gốc về cổng API v1 chính thức dành cho CLI/SDK của Vast.ai
 BASE_URL = "https://vast.ai"
 headers = {
     "Accept": "application/json",
-    "Content-Type": "application/json",
     "Authorization": f"Bearer {VAST_API_KEY}"
 }
 
@@ -19,21 +19,21 @@ while True:
     try:
         print(f"\n[INFO] Đang quét Vast.ai vào lúc: {time.strftime('%X')}...")
 
-        # 1. TÌM KIẾM MÁY PHÙ HỢP
+        # 1. TÌM KIẾM MÁY PHÙ HỢP (Sử dụng endpoint /bundles/ của v1)
         search_url = f"{BASE_URL}/bundles/"
         search_payload = {
             "q": f"rentprice < {MAX_PRICE} inet_down > 600 reliability > 0.90 cuda_vers >= 11.8 rented=false",
             "order": [["rentprice", "asc"]]
         }
         
-        # SỬA CHUẨN: Ép kiểu dữ liệu sang chuỗi JSON thuần túy bằng json.dumps và truyền qua tham số data=
-        response = requests.post(search_url, headers=headers, data=json.dumps(search_payload))
+        # Gửi truy vấn tìm kiếm kho máy dưới dạng JSON mã hóa thô
+        response = requests.post(search_url, headers=headers, json=search_payload)
 
         if response.status_code == 200:
             offers = response.json().get("offers", [])
 
             if offers:
-                # Lấy phần tử index số 0 trong danh sách kết quả trả về
+                # Bóc tách phần tử đầu tiên trong mảng kết quả trả về
                 best_offer = offers[0] 
                 offer_id = best_offer["id"]
                 actual_price = best_offer["rentprice"]
@@ -50,7 +50,7 @@ while True:
                     "runtype": "args"
                 }
 
-                rent_res = requests.post(rent_url, headers=headers, data=json.dumps(rent_payload))
+                rent_res = requests.post(rent_url, headers=headers, json=rent_payload)
 
                 if rent_res.status_code == 200:
                     result_data = rent_res.json()
@@ -61,7 +61,7 @@ while True:
             else:
                 print("[X] Chưa tìm thấy máy cấu hình phổ thông nào phù hợp với mức giá yêu cầu.")
         else:
-            print(f"[X] Lỗi truy vấn kho máy. Mã trạng thái HTTP: {response.status_code} - {response.text}")
+            print(f"[X] Lỗi truy vấn kho máy. Mã trạng thái HTTP: {response.status_code}")
 
     except Exception as e:
         print(f"[💥 CRASH] Gặp lỗi logic phần mềm hoặc kết nối: {type(e).__name__} - {e}")
