@@ -59,14 +59,25 @@ print(f"[INFO] Kho mã nguồn mục tiêu: {GITHUB_REPO}")
 if not VAST_API_KEY:
     print("[CRITICAL] CANH BAO: VAST_API_KEY dang bi trong! He thong co the bi lap loi.")
 
+
+# ==============================================================================
+# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI (ĐÃ SỬA LỖI JSON VÀ ĐƯỜNG DẪN)
+# ==============================================================================
 def get_instances():
     try:
+        # Gửi request lên API lấy danh sách máy đang thuê
         r = requests.get(f"{BASE_URL}/instances", headers=HEADERS, timeout=20)
-        if r.status_code == 200:
-            return r.json().get("instances", [])
-        else:
-            print(f"[❌] Loi ket noi API Vast.ai (HTTP {r.status_code}): {r.text}")
+        
+        if r.status_code != 200:
+            print(f"[❌] Vast.ai tu choi ket noi (HTTP {r.status_code}): {r.text[:200]}")
             return []
+            
+        try:
+            return r.json().get("instances", [])
+        except ValueError:
+            print(f"[❌] API tra ve text chu khong phai JSON. Noi dung: {r.text[:200]}")
+            return []
+            
     except Exception as e:
         print(f"[ERROR] Khong the ket noi den Vast.ai: {e}")
         return []
@@ -135,8 +146,15 @@ while True:
     
     try:
         r = requests.get(f"{BASE_URL}/bundles", headers=HEADERS, params={"q": json.dumps(query_filter)}, timeout=20)
+        
         if r.status_code == 200:
-            res_data = r.json()
+            try:
+                res_data = r.json()
+            except ValueError:
+                print(f"[❌] Du lieu bundles lay ve bi loi JSON. Noi dung: {r.text[:200]}")
+                time.sleep(40)
+                continue
+                
             offers = res_data.get("offers", res_data.get("results", []))
             
             if not offers:
@@ -165,7 +183,7 @@ while True:
                 print(f"[❌] Yeu cau thue that bai. Thong tin phan hoi (HTTP {rent_resp.status_code}): {rent_resp.text}")
                 time.sleep(30)
         else:
-            print(f"[❌] May chu lay thong tin bundles bao loi (HTTP {r.status_code}): {r.text}")
+            print(f"[❌] May chu lay thong tin bundles bao loi (HTTP {r.status_code}): {r.text[:200]}")
             time.sleep(40)
     except Exception as e:
         print(f"[ERROR] He thong phat sinh loi ngoai le: {e}")
