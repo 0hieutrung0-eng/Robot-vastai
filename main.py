@@ -45,7 +45,7 @@ VAST_HOST = "https://vast.ai"
 VAST_PATH = "/api/v0"
 BASE_URL = VAST_HOST + VAST_PATH
 
-# Đã chuẩn hóa viết hoa token và Content-Type cấu trúc header xác thực
+# Header chuẩn xác theo yêu cầu hệ thống xác thực của Vast.ai
 HEADERS = {
     "Authorization": f"Bearer {VAST_API_KEY}",
     "Content-Type": "application/json",
@@ -67,18 +67,18 @@ print_and_log(f"[INFO] Kho mã nguồn mục tiêu: {GITHUB_REPO}")
 def get_instances():
     try:
         print_and_log("[📡] Đang gửi yêu cầu lấy danh sách máy từ Vast.ai...")
-        r = requests.get(f"{BASE_URL}/instances/", headers=HEADERS, timeout=20)
+        r = requests.get(f"{BASE_URL}/instances/", headers=HEADERS, params={"api_key": VAST_API_KEY}, timeout=20)
         
-        if r.status_code != 200:
+        if r.status_code == 200:
+            try:
+                instances_list = r.json().get("instances", [])
+                print_and_log(f"[📊] Tìm thấy tổng cộng: {len(instances_list)} máy trên tài khoản.")
+                return instances_list
+            except ValueError:
+                print_and_log(f"[❌] API trả về dữ liệu không hợp lệ. Nội dung: {r.text[:200]}")
+                return []
+        else:
             print_and_log(f"[❌] Lấy danh sách máy thất bại (HTTP {r.status_code}): {r.text[:200]}")
-            return []
-            
-        try:
-            instances_list = r.json().get("instances", [])
-            print_and_log(f"[📊] Tìm thấy tổng cộng: {len(instances_list)} máy trên tài khoản.")
-            return instances_list
-        except ValueError:
-            print_and_log(f"[❌] API trả về dữ liệu không hợp lệ. Nội dung: {r.text[:200]}")
             return []
             
     except Exception as e:
@@ -122,15 +122,16 @@ while True:
         status = str(inst.get("status", "")).lower()
         gpu_name = inst.get("gpu_name", "Unknown")
         
+        # SỬA ĐỔI CHUẨN XÁC: Endpoint xóa máy bỏ dấu gạch chéo cuối ID để tránh lỗi 404
         if status in ["error", "dead", "stopped", "failed"]:
             print_and_log(f" 🗑️ Phát hiện máy lỗi -> Tiến hành xóa: {gpu_name} (ID: {inst_id})")
-            requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS, timeout=15)
+            requests.delete(f"{BASE_URL}/instances/{inst_id}", headers=HEADERS, params={"api_key": VAST_API_KEY}, timeout=15)
             time.sleep(8)
         elif status in ACTIVE_STATUS:
             valid_kept += 1
             if valid_kept > MAX_INSTANCES:
                 print_and_log(f" 🗑️ Phát hiện máy dư thừa -> Tiến hành xóa máy thừa: {gpu_name} (ID: {inst_id})")
-                requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS, timeout=15)
+                requests.delete(f"{BASE_URL}/instances/{inst_id}", headers=HEADERS, params={"api_key": VAST_API_KEY}, timeout=15)
                 time.sleep(8)
                 
     if valid_kept >= MAX_INSTANCES:
@@ -141,16 +142,23 @@ while True:
         continue
 
     print_and_log(f"[🔍] Số máy hoạt động ({valid_kept}) thấp hơn chỉ tiêu ({MAX_INSTANCES}). Tiến hành quét tìm RTX 3090...")
+    
+    # Cú pháp bộ lọc query chính xác tương thích với công cụ tìm kiếm của Vast.ai v0
     query_filter = {
         "rentable": {"eq": True},
         "rented": {"eq": False},
         "dph_total": {"lte": MAX_PRICE},
-        "gpu_name": {"eq": "RTX 3090"}
+        "gpu_name": {"eq": "GeForce RTX 3090"}
+    }
+    
+    search_params = {
+        "api_key": VAST_API_KEY,
+        "q": json.dumps(query_filter)
     }
     
     try:
         print_and_log("[📡] Đang gửi bộ lọc tìm kiếm máy giá rẻ lên thị trường Vast.ai...")
-        r = requests.get(f"{BASE_URL}/bundles/", headers=HEADERS, params={"q": json.dumps(query_filter)}, timeout=20)
+        r = requests.get(f"{BASE_URL}/bundles/", headers=HEADERS, params=search_params, timeout=20)
         
         if r.status_code == 200:
             try:
@@ -161,10 +169,10 @@ while True:
                 continue
                 
             offers = res_data.get("offers", res_data.get("results", []))
-            print_and_log(f"[📊] Kết quả tìm kiếm: Tìm thấy {len(offers)} máy thỏa mãn tiêu chuẩn (RTX 3090)")
+            print_and_log(f"[📊] Kết quả tìm kiếm: Tìm thấy {len(offers)} máy thỏa mãn tiêu chuẩn")
             
             if not offers:
-                print_and_log(f"[⚠️] Không có máy RTX 3090 nào giá rẻ hơn {MAX_PRICE}$. Quét lại sau 40 giây...")
+                print_and_log(f"[⚠️] Không có máy GeForce RTX 3090 nào giá rẻ hơn {MAX_PRICE}$. Quét lại sau 40 giây...")
                 time.sleep(40)
                 continue
                 
@@ -182,14 +190,20 @@ while True:
                 "onstart": create_onstart_script()
             }
             
-            # === ĐÃ SỬA: Chuyển đổi phương thức từ PUT sang POST và đổi endpoint sang cấu trúc đặt mua máy chuẩn ===
-            rent_resp = requests.post(f"{BASE_URL}/asks/{offer_id}/", headers=HEADERS, json=rent_payload, timeout=90)
+            # SỬA ĐỔI TRIỆT ĐỂ: Phương thức PUT gửi vào cấu trúc endpoint /asks/{offer_id}/ chuẩn tài liệu REST Vast.ai
+            rent_resp = requests.put(
+                f"{BASE_URL}/asks/{offer_id}/", 
+                headers=HEADERS, 
+                params={"api_key": VAST_API_KEY},
+                json=rent_payload, 
+                timeout=90
+            )
             
             if rent_resp.status_code in (200, 201):
                 print_and_log(f"[🎉] XÁC NHẬN: THUÊ THÀNH CÔNG MÁY {gpu}! Tạm nghỉ 15 phút chờ máy setup...")
                 time.sleep(900)
             else:
-                print_and_log(f"[❌] Lệnh thuê bị từ chối (HTTP {rent_resp.status_code}): {rent_resp.text}")
+                print_and_log(f"[❌] Lệnh thuê bị từ chối (HTTP {rent_resp.status_code}): {rent_resp.text[:200]}")
                 time.sleep(30)
         else:
             print_and_log(f"[❌] Lấy dữ liệu thị trường thất bại (HTTP {r.status_code}): {r.text[:200]}")
