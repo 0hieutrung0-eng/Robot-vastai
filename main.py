@@ -9,18 +9,18 @@ AGENT_TOKEN = os.getenv("AGENT_TOKEN", "rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3")
 MAX_PRICE = 0.25
 MAX_INSTANCES = 1
 
-BASE_URL = "https://console.vast.ai/api/v1"   # Dùng API v1 (quan trọng)
+BASE_URL = "https://console.vast.ai/api/v1"   # API v1 - Đã cập nhật
 HEADERS = {
     "Authorization": f"Bearer {VAST_API_KEY}",
     "Content-Type": "application/json"
 }
 
-# ================== THAY REPO CỦA BẠN Ở ĐÂY ==================
-GITHUB_REPO = "https://github.com/YOUR_USERNAME/YOUR_REPO.git"   # ← SỬA LẠI
+# ================== SỬA REPO CỦA BẠN TẠI ĐÂY ==================
+GITHUB_REPO = "https://github.com/YOUR_USERNAME/YOUR_REPO.git"   # ← BẮT BUỘC SỬA
 
-print("[START] Robot Vast.ai - Giữ DUY NHẤT 1 GPU")
+print("[START] Robot Vast.ai - Chỉ giữ DUY NHẤT 1 GPU")
 
-# ====================== LẤY INSTANCES ======================
+# ====================== LẤY DANH SÁCH INSTANCES ======================
 def get_instances():
     try:
         r = requests.get(f"{BASE_URL}/instances/", headers=HEADERS, timeout=20)
@@ -45,7 +45,7 @@ rm -rf /app
 if git clone --depth 1 {GITHUB_REPO} /app; then
     echo "→ Clone thành công" >> /root/agent.log
 else
-    echo "→ Clone thất bại → Tạo placeholder" >> /root/agent.log
+    echo "→ Clone thất bại, tạo placeholder" >> /root/agent.log
     mkdir -p /app
     echo 'import time; print("Placeholder running..."); time.sleep(999999)' > /app/main.py
 fi
@@ -54,7 +54,7 @@ cd /app
 
 if [ -f "requirements.txt" ]; then
     echo "[2/3] Installing dependencies..." >> /root/agent.log
-    pip install -r requirements.txt --no-cache-dir -q || echo "Pip warning" >> /root/agent.log
+    pip install -r requirements.txt --no-cache-dir -q || echo "Pip install warning" >> /root/agent.log
 fi
 
 echo "[3/3] Starting agent..." >> /root/agent.log
@@ -72,7 +72,7 @@ while True:
     ACTIVE_STATUS = {"running", "loading", "creating", "starting"}
     
     running_count = sum(1 for inst in instances if str(inst.get("status", "")).lower() in ACTIVE_STATUS)
-    print(f"\n[CHECK] Running: {running_count} | Total instances: {len(instances)}")
+    print(f"\n[CHECK] Running: {running_count} | Total: {len(instances)}")
 
     valid_kept = 0
     for inst in instances:
@@ -80,16 +80,16 @@ while True:
         status = str(inst.get("status", "")).lower()
         gpu_name = inst.get("gpu_name", "Unknown")
 
-        # Xóa máy lỗi
+        # Xóa máy lỗi hoặc chết
         if status in ["error", "dead", "stopped", "failed", "creating failed"]:
-            print(f"   🗑️ Xóa máy lỗi: {gpu_name} (ID: {inst_id}) - Status: {status}")
+            print(f"   🗑️ Xóa máy lỗi: {gpu_name} (ID: {inst_id})")
             try:
                 requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS, timeout=15)
             except:
                 pass
             time.sleep(8)
 
-        # Giữ máy đang chạy
+        # Máy đang chạy bình thường
         elif status in ACTIVE_STATUS:
             valid_kept += 1
             if valid_kept > MAX_INSTANCES:
@@ -100,13 +100,12 @@ while True:
                     pass
                 time.sleep(8)
 
-    # Nếu đã có đủ 1 máy ổn định → Nghỉ
     if valid_kept >= MAX_INSTANCES:
         print(f"[✅] Đã có {valid_kept} máy ổn định → Nghỉ 8 phút")
         time.sleep(480)
         continue
 
-    # ====================== TÌM VÀ THUÊ MÁY MỚI ======================
+    # ====================== TÌM VÀ THUÊ MÁY ======================
     print("[🔍] Đang tìm máy RTX 3090 series...")
 
     search_payload = {
@@ -123,18 +122,18 @@ while True:
         offers = resp.json().get("offers", []) if resp.status_code == 200 else []
 
         if not offers:
-            print("[⚠️] Không tìm thấy máy phù hợp")
+            print("[⚠️] Không tìm thấy offer phù hợp")
             time.sleep(40)
             continue
 
         best = offers[0]
         offer_id = best["id"]
-        gpu = best.get("gpu_name", "Unknown GPU")
+        gpu = best.get("gpu_name", "Unknown")
 
         print(f"[🎯] Tìm thấy {gpu} → Đang thuê...")
 
         rent_payload = {
-            "image": "nvidia/cuda:11.7.1-runtime-ubuntu22.04",   # Phù hợp driver cũ
+            "image": "nvidia/cuda:11.8.0-runtime-ubuntu22.04",
             "disk": 40.0,
             "runtype": "ssh_direct",
             "onstart": create_onstart_script()
@@ -147,10 +146,12 @@ while True:
 
         if rent_resp.status_code in (200, 201):
             print(f"[🎉] THUÊ THÀNH CÔNG {gpu}!")
-            time.sleep(900)  # Chờ 15 phút cho máy khởi động
+            time.sleep(900)   # Chờ máy khởi động
         else:
             print(f"[❌] Thuê thất bại: {rent_resp.status_code}")
             print(f"Chi tiết: {rent_resp.text[:500]}")
 
     except Exception as e:
-        print(f"[ERROR] Lỗi tìm
+        print(f"[ERROR] Quá trình tìm/thuê: {e}")
+
+    time.sleep(40)
