@@ -5,7 +5,7 @@ import threading
 from fastapi import FastAPI
 import uvicorn
 
-# ====================== FASTAPI để giữ Spaces alive ======================
+# ====================== FASTAPI (giữ Spaces alive) ======================
 app = FastAPI()
 SYSTEM_STATUS = "Robot đang khởi động..."
 
@@ -31,11 +31,14 @@ MAX_INSTANCES = 1
 GITHUB_REPO = "/0hieutrung0-eng/Robot-vastai.git"
 
 BASE_URL = "https://console.vast.ai/api/v0"
-HEADERS = {
-    "Accept": "application/json",
-    "Content-Type": "application/json",
-    "User-Agent": "Mozilla/5.0"
-}
+
+def get_auth_headers():
+    return {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0",
+        "Authorization": f"Bearer {VAST_API_KEY}"
+    }
 
 def print_and_log(msg):
     global SYSTEM_STATUS
@@ -71,11 +74,14 @@ echo "→ Main agent started" >> /root/agent.log
 sleep infinity
 """
 
-# ========================== API FUNCTIONS ==========================
+# ========================== API HELPERS ==========================
 def get_my_instances():
     try:
-        r = requests.get(f"{BASE_URL}/instances/?owner=me", 
-                        headers=HEADERS, params={"api_key": VAST_API_KEY}, timeout=20)
+        r = requests.get(
+            f"{BASE_URL}/instances/?owner=me",
+            headers=get_auth_headers(),
+            timeout=20
+        )
         return r.json().get("instances", []) if r.status_code == 200 else []
     except Exception as e:
         print_and_log(f"[ERROR] get_my_instances: {e}")
@@ -88,25 +94,38 @@ def search_offers():
         "gpu_name": {"in": ["RTX 3090", "RTX 3090 Ti"]},
         "dph_total": {"lte": MAX_PRICE},
         "type": {"eq": "on-demand"},
-        "limit": 8
+        "limit": 10
     }
     try:
-        r = requests.post(f"{BASE_URL}/bundles/", 
-                         headers=HEADERS, params={"api_key": VAST_API_KEY}, 
-                         json=query, timeout=25)
+        r = requests.post(
+            f"{BASE_URL}/bundles/",
+            headers=get_auth_headers(),
+            json=query,
+            timeout=25
+        )
+        print_and_log(f"[DEBUG] Search status: {r.status_code}")
+        
         if r.status_code == 200:
             offers = r.json().get("offers", [])
-            print_and_log(f"[📊] Tìm thấy {len(offers)} offer RTX 3090")
+            print_and_log(f"[📊] Tìm thấy {len(offers)} offer phù hợp")
             return offers
         else:
             print_and_log(f"[❌] Search failed {r.status_code}")
+            print_and_log(f"Response: {r.text[:500]}")
             return []
     except Exception as e:
         print_and_log(f"[ERROR] search_offers: {e}")
         return []
 
 # ========================== MAIN LOOP ==========================
-print_and_log("[🚀] Robot Vast.ai v2.1 - Đang chạy")
+print_and_log("[🚀] Robot Vast.ai v2.2 - Đang chạy")
+
+# Test API Key
+try:
+    test_r = requests.get(f"{BASE_URL}/instances/?owner=me", headers=get_auth_headers(), timeout=10)
+    print_and_log(f"[TEST] API Key status: {test_r.status_code}")
+except Exception as e:
+    print_and_log(f"[TEST] Lỗi kiểm tra API Key: {e}")
 
 while True:
     instances = get_my_instances()
@@ -115,16 +134,21 @@ while True:
 
     print_and_log(f"[CHECK] Đang hoạt động: {active_count}/{MAX_INSTANCES}")
 
-    # Xóa máy lỗi
+    # Cleanup máy lỗi
     for inst in instances:
-        if str(inst.get("status", "")).lower() in ["error", "dead", "stopped", "failed"]:
-            inst_id = inst.get("id")
-            print_and_log(f"🗑️ Xóa máy lỗi ID: {inst_id}")
-            requests.delete(f"{BASE_URL}/instances/{inst_id}/", 
-                          headers=HEADERS, params={"api_key": VAST_API_KEY})
+        status = str(inst.get("status", "")).lower()
+        inst_id = inst.get("id")
+        if status in ["error", "dead", "stopped", "failed"]:
+            print_and_log(f"🗑️ Xóa máy lỗi: {inst.get('gpu_name')} (ID: {inst_id})")
+            requests.delete(
+                f"{BASE_URL}/instances/{inst_id}/",
+                headers=get_auth_headers()
+            )
+            time.sleep(8)
 
     if active_count >= MAX_INSTANCES:
-        time.sleep(480)  # 8 phút
+        print_and_log("[✅] Đủ máy, nghỉ 8 phút...")
+        time.sleep(480)
         continue
 
     offers = search_offers()
@@ -132,11 +156,12 @@ while True:
         time.sleep(30)
         continue
 
+    # Chọn máy rẻ nhất
     offers.sort(key=lambda x: float(x.get("dph_total", 999)))
     best = offers[0]
     price = float(best.get("dph_total", 0))
 
-    print_and_log(f"[🎯] Thuê máy: {best.get('gpu_name')} - ${price}/h")
+    print_and_log(f"[🎯] Thuê máy: {best.get('gpu_name')} - ${price}/h (ID: {best['id']})")
 
     rent_payload = {
         "image": "nvidia/cuda:12.4.1-runtime-ubuntu22.04",
@@ -149,8 +174,7 @@ while True:
 
     rent_resp = requests.put(
         f"{BASE_URL}/asks/{best['id']}/",
-        headers=HEADERS,
-        params={"api_key": VAST_API_KEY},
+        headers=get_auth_headers(),
         json=rent_payload,
         timeout=60
     )
@@ -160,4 +184,5 @@ while True:
         time.sleep(900)
     else:
         print_and_log(f"[❌] Thuê thất bại: {rent_resp.status_code}")
+        print(rent_resp.text[:400] if hasattr(rent_resp, 'text') else "")
         time.sleep(30)
