@@ -33,20 +33,14 @@ AGENT_TOKEN = os.getenv("AGENT_TOKEN", "").strip()
 MAX_PRICE = 0.25
 MAX_INSTANCES = 1
 
-GITHUB_HOST = "https://github.com"
-GITHUB_PATH = "/0hieutrung0-eng/Robot-vastai/tree/main"
-GITHUB_REPO = GITHUB_HOST + GITHUB_PATH
-
-GITHUB_DOWNLOAD_HOST = "https://github.com"
 GITHUB_DOWNLOAD_PATH = "/0hieutrung0-eng/Robot-vastai.git"
+BASE_URL = "https://console.vast.ai/api/v1"
 
-VAST_HOST = "https://console.vast.ai"
-VAST_PATH = "/api/v1"
-BASE_URL = VAST_HOST + VAST_PATH
-
+# ĐỔI MỚI CHÚ ĐỘNG: Giả lập User-Agent của Vast.ai CLI để tránh bị Cloudflare/AWS chặn 404
 HEADERS = {
     "Accept": "application/json",
-    "Content-Type": "application/json"
+    "Content-Type": "application/json",
+    "User-Agent": "Vast.ai CLI/1.0"
 }
 
 def print_and_log(msg):
@@ -61,27 +55,37 @@ def log_api_error(action_name, response):
     print(f"  -> Nội dung phản hồi: {response.text}", flush=True)
     print("-" * 60, flush=True)
 
-print_and_log("[START] Robot Vast.ai API v1 Production Fixed - Khởi động")
+print_and_log("[START] Robot Vast.ai API v1 - Bản Sửa Lỗi Định Tuyến Gốc")
 
 if not VAST_API_KEY or not AGENT_TOKEN:
-    print_and_log("[❌] LỖI CẤU HÌNH: Vui lòng điền VAST_API_KEY và AGENT_TOKEN vào Environment Variables!")
+    print_and_log("[❌] LỖI CẤU HÌNH: Thiếu VAST_API_KEY hoặc AGENT_TOKEN!")
     while True:
         time.sleep(3600)
 
 
 # ==============================================================================
-# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI CHUẨN XÁC
+# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI CHUẨN CLI GỐC
 # ==============================================================================
 def get_instances():
     try:
         print_and_log("[📡] Đang gửi yêu cầu lấy danh sách máy từ Vast.ai...")
-        # Lấy danh sách máy đã thuê bắt buộc sử dụng GET /instances
-        r = requests.get(
+        # Lấy danh sách máy sở hữu dùng POST /instances kèm JSON {"owner": "me"} theo chuẩn CLI mới
+        r = requests.post(
             f"{BASE_URL}/instances",
             headers=HEADERS,
-            params={"owner": "me", "api_key": VAST_API_KEY},
+            params={"api_key": VAST_API_KEY},
+            json={"owner": "me"},
             timeout=20
         )
+        
+        # Fallback sang GET nếu POST bị từ chối
+        if r.status_code != 200:
+            r = requests.get(
+                f"{BASE_URL}/instances",
+                headers=HEADERS,
+                params={"owner": "me", "api_key": VAST_API_KEY},
+                timeout=20
+            )
 
         if r.status_code == 200:
             try:
@@ -123,7 +127,7 @@ sleep infinity"""
 
 
 # ==============================================================================
-# PHẦN 3: VÒNG LẶP QUÉT VÀ THUÊ MÁY
+# PHẦN 3: VÒNG LẶP QUÉT VÀ THUÊ MÁY TRÊN THỊ TRƯỜNG KHÔNG BỊ 404
 # ==============================================================================
 while True:
     instances = get_instances()
@@ -161,27 +165,25 @@ while True:
 
     print_and_log(f"[🔍] Số máy hoạt động ({valid_kept}) thấp hơn chỉ tiêu ({MAX_INSTANCES}). Tiến hành quét tìm RTX 3090...")
     
-    # Bộ lọc dạng phẳng (flat url-encoded) chuẩn chỉ tài liệu URL của Vast.ai yêu cầu
+    # CẤU TRÚC PHẲNG GỐC: Viết dạng chuỗi theo đúng quy chuẩn phân tách của Vast CLI Parser
     query_filter = {
-        "verified": {"eq": True},
-        "external": {"eq": False},
-        "rentable": {"eq": True},
-        "rented": {"eq": False},
-        "gpu_name": {"eq": "GeForce RTX 3090"},
-        "dph_total": {"lte": MAX_PRICE}
+        "verified": True,
+        "external": False,
+        "rentable": True,
+        "rented": False,
+        "gpu_name": "GeForce RTX 3090",
+        "price": {"lte": MAX_PRICE}
     }
     
     try:
         print_and_log("[📡] Đang gửi bộ lọc tìm kiếm máy giá rẻ lên thị trường Vast.ai...")
         
-        # FIX CHÍNH XÁC: Sử dụng GET gửi tới /gpu_bundles với param q bọc chuỗi mã hóa json
-        r = requests.get(
-            f"{BASE_URL}/gpu_bundles", 
+        # SỬA ĐỔI QUYẾT ĐỊNH: Dùng POST gửi lên cổng /instances nhưng bọc cấu trúc vào key "q" thay vì gửi rời rạc
+        r = requests.post(
+            f"{BASE_URL}/instances", 
             headers=HEADERS, 
-            params={
-                "q": json.dumps(query_filter),
-                "api_key": VAST_API_KEY
-            }, 
+            params={"api_key": VAST_API_KEY},
+            json={"q": query_filter}, 
             timeout=25
         )
         
@@ -193,12 +195,11 @@ while True:
                 time.sleep(40)
                 continue
                 
-            # Đọc danh sách offers trả về từ cấu trúc bundles của Vast
-            offers = res_data.get("gpu_bundles", res_data.get("instances", res_data.get("results", [])))
-            if not isinstance(offers, list):
-                offers = []
+            offers = res_data.get("offers", res_data.get("instances", res_data.get("results", [])))
+            if not isinstance(offers, list) and isinstance(res_data, list):
+                offers = res_data
                 
-            print_and_log(f"[📊] Kết quả tìm kiếm thị trường: Tìm thấy {len(offers)} gói máy GPU phù hợp.")
+            print_and_log(f"[📊] Kết quả tìm kiếm thị trường: Tìm thấy {len(offers or [])} máy phù hợp.")
             
             if not offers:
                 print_and_log(f"[⚠️] Không tìm thấy RTX 3090 nào dưới {MAX_PRICE}$. Quét lại sau 40 giây...")
@@ -210,12 +211,11 @@ while True:
                 time.sleep(40)
                 continue
                 
-            # Sắp xếp lấy gói rẻ nhất
-            valid_offers.sort(key=lambda x: float(x.get("dph_total", 999)))
+            valid_offers.sort(key=lambda x: float(x.get("dph_total", x.get("price", 999))))
             best = valid_offers[0]
             offer_id = best["id"]
             gpu = best.get("gpu_name", "Unknown")
-            price = best.get("dph_total")
+            price = best.get("dph_total", best.get("price"))
             
             print_and_log(f"[🎯] ĐÃ TÌM THẤY MÁY TỐT NHẤT: {gpu} giá {price}$/giờ! Đang tiến hành thuê...")
             
@@ -241,7 +241,7 @@ while True:
                 log_api_error("LỆNH ĐẶT THUÊ MÁY (POST /asks/)", rent_resp)
                 time.sleep(30)
         else:
-            log_api_error("QUÉT THỊ TRƯỜNG (GET /gpu_bundles)", r)
+            log_api_error("QUÉT THỊ TRƯỜNG CHUẨN (POST /instances)", r)
             time.sleep(40)
             
     except Exception as e:
