@@ -55,7 +55,7 @@ def print_and_log(msg):
     SYSTEM_STATUS = msg
     print(msg, flush=True)
 
-print_and_log("[START] Robot Vast.ai Console API v1 (Fixed Bundles) - Khởi động")
+print_and_log("[START] Robot Vast.ai Console API v1 Ultimate - Khởi động")
 
 if not VAST_API_KEY or not AGENT_TOKEN:
     print_and_log("[❌] LỖI CẤU HÌNH: Vui lòng điền VAST_API_KEY và AGENT_TOKEN vào Environment Variables!")
@@ -66,7 +66,7 @@ print_and_log(f"[INFO] Kho mã nguồn mục tiêu: {GITHUB_REPO}")
 
 
 # ==============================================================================
-# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI
+# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI VIA CONSOLE V1
 # ==============================================================================
 def get_instances():
     try:
@@ -151,23 +151,30 @@ while True:
 
     print_and_log(f"[🔍] Số máy hoạt động ({valid_kept}) thấp hơn chỉ tiêu ({MAX_INSTANCES}). Tiến hành quét tìm RTX 3090...")
     
-    # Chuẩn hóa cấu trúc bộ lọc tương thích chính xác với endpoint /bundles mới của v1
+    # Cập nhật chuẩn cấu trúc query filter mới cho API v1 tìm kiếm máy qua endpoint /instances dạng POST
     query_filter = {
-        "rentable": True,
-        "rented": False,
-        "dph_total": {"lte": MAX_PRICE},
-        "gpu_name": "GeForce RTX 3090"
+        "verified": {"eq": True},
+        "external": {"eq": False},
+        "rentable": {"eq": True},
+        "rented": {"eq": False},
+        "gpu_name": {"eq": "GeForce RTX 3090"},
+        "dph_total": {"lte": MAX_PRICE}
     }
     
-    search_params = {
-        "api_key": VAST_API_KEY,
-        "q": json.dumps(query_filter)
+    search_payload = {
+        "q": query_filter
     }
     
     try:
         print_and_log("[📡] Đang gửi bộ lọc tìm kiếm máy giá rẻ lên thị trường Vast.ai...")
-        # SỬA ĐỔI QUAN TRỌNG: Loại bỏ dấu gạch chéo cuối cùng tại endpoint /bundles để sửa lỗi 404 Not Found
-        r = requests.get(f"{BASE_URL}/bundles", headers=HEADERS, params=search_params, timeout=20)
+        # THAY ĐỔI QUAN TRỌNG: Sử dụng phương thức POST gửi payload JSON tới endpoint /instances chuẩn v1
+        r = requests.post(
+            f"{BASE_URL}/instances", 
+            headers=HEADERS, 
+            params={"api_key": VAST_API_KEY},
+            json=search_payload, 
+            timeout=25
+        )
         
         if r.status_code == 200:
             try:
@@ -177,7 +184,7 @@ while True:
                 time.sleep(40)
                 continue
                 
-            offers = res_data.get("offers", res_data.get("results", []))
+            offers = res_data.get("instances", res_data.get("results", []))
             print_and_log(f"[📊] Kết quả tìm kiếm: Tìm thấy {len(offers)} máy thỏa mãn tiêu chuẩn")
             
             if not offers:
@@ -199,7 +206,7 @@ while True:
                 "onstart": create_onstart_script()
             }
             
-            # Đồng bộ endpoint đặt thuê chuẩn v1 (không chứa dấu gạch chéo cuối)
+            # Endpoint đặt thuê chuẩn v1 bằng phương thức POST dựa trên ID máy quét được
             rent_resp = requests.post(
                 f"{BASE_URL}/asks/{offer_id}", 
                 headers=HEADERS, 
