@@ -127,7 +127,7 @@ while True:
         print(f"[🎯] Tìm thấy {gpu} → Đang thuê...")
 
         rent_payload = {
-            "image": "nvidia/cuda:12.1.1-runtime-ubuntu22.04",
+            "image": "nvidia/cuda:11.7.1-runtime-ubuntu22.04",
             "disk": 40.0,
             "runtype": "ssh_direct",
             "onstart": create_onstart_script()
