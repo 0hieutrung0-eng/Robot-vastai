@@ -71,7 +71,7 @@ echo "→ Main agent started" >> /root/agent.log
 sleep infinity
 """
 
-# ========================== API HELPERS ==========================
+# ========================== API ==========================
 def get_my_instances():
     try:
         r = requests.get(f"{BASE_URL}/instances/?owner=me", headers=get_auth_headers(), timeout=20)
@@ -81,53 +81,39 @@ def get_my_instances():
         return []
 
 def search_offers():
-    query = {
-        "verified": {"eq": True},
-        "rentable": {"eq": True},
-        "gpu_name": {"in": ["RTX 3090", "RTX 3090 Ti"]},
-        "dph_total": {"lte": MAX_PRICE},
-        "type": {"eq": "on-demand"},
-        "limit": 10
-    }
+    # Query theo kiểu string (cách CLI dùng)
+    query_str = "verified=true rentable=true gpu_name=RTX_3090 dph_total<=0.25 type=on-demand limit=10"
     
-    endpoints = [
-        f"{BASE_URL}/bundles/",
-        f"{BASE_URL}/offers/search/",
-        f"{BASE_URL}/instances/query/",
-        f"{BASE_URL}/asks/search/"
-    ]
-    
-    for endpoint in endpoints:
-        try:
-            print_and_log(f"[TRY] Testing endpoint: {endpoint.split('/')[-2]}")
-            r = requests.post(endpoint, headers=get_auth_headers(), json=query, timeout=20)
-            print_and_log(f"[DEBUG] {endpoint} → Status: {r.status_code}")
-            
-            if r.status_code == 200:
-                data = r.json()
-                offers = data.get("offers") or data.get("instances") or data.get("results") or []
-                print_and_log(f"[✅] Tìm thấy {len(offers)} offer!")
-                return offers
-            elif r.status_code == 404:
-                continue
-            else:
-                print_and_log(f"Response: {r.text[:300]}")
-        except Exception as e:
-            print_and_log(f"[ERROR] {endpoint}: {e}")
-    
-    print_and_log("[❌] Không tìm thấy endpoint search nào hợp lệ")
-    return []
+    try:
+        print_and_log("[TRY] Tìm máy RTX 3090...")
+        r = requests.get(
+            f"{BASE_URL}/instances/search/",
+            headers=get_auth_headers(),
+            params={"query": query_str},
+            timeout=25
+        )
+        print_and_log(f"[DEBUG] Search status: {r.status_code}")
+        
+        if r.status_code == 200:
+            data = r.json()
+            offers = data.get("offers") or data.get("instances") or data.get("results") or []
+            print_and_log(f"[✅] Tìm thấy {len(offers)} offer!")
+            return offers
+        else:
+            print_and_log(f"[❌] Search failed {r.status_code} - {r.text[:400]}")
+            return []
+    except Exception as e:
+        print_and_log(f"[ERROR] search_offers: {e}")
+        return []
 
 # ========================== MAIN LOOP ==========================
-print_and_log("[🚀] Robot Vast.ai v2.4 - Tìm endpoint")
+print_and_log("[🚀] Robot Vast.ai v2.5 - Search fix")
 
 while True:
     instances = get_my_instances()
     active_count = sum(1 for inst in instances if inst.get("status") in ["running", "loading", "creating", "starting"])
-    
     print_and_log(f"[CHECK] Đang hoạt động: {active_count}/{MAX_INSTANCES}")
 
-    # Cleanup
     for inst in instances:
         if str(inst.get("status", "")).lower() in ["error", "dead", "stopped", "failed"]:
             inst_id = inst.get("id")
@@ -148,7 +134,7 @@ while True:
     best = offers[0]
     price = float(best.get("dph_total", 0))
 
-    print_and_log(f"[🎯] Thuê: {best.get('gpu_name')} - ${price}/h")
+    print_and_log(f"[🎯] Thuê máy: {best.get('gpu_name')} - ${price}/h")
 
     rent_payload = {
         "image": "nvidia/cuda:12.4.1-runtime-ubuntu22.04",
@@ -167,8 +153,8 @@ while True:
     )
 
     if rent_resp.status_code in (200, 201):
-        print_and_log("[🎉] THUÊ THÀNH CÔNG!")
+        print_and_log("[🎉] THUÊ THÀNH CÔNG! Chờ boot...")
         time.sleep(900)
     else:
-        print_and_log(f"[❌] Thuê thất bại {rent_resp.status_code}")
+        print_and_log(f"[❌] Thuê thất bại: {rent_resp.status_code}")
         time.sleep(30)
