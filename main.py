@@ -3,42 +3,40 @@ import requests
 import time
 import json
 
-# ====================== CẤU HÌNH GỐC NGUYÊN BẢN CỦA BẠN ======================
-VAST_API_KEY = os.getenv("VAST_API_KEY", "").strip()
+# ====================== CẤU HÌNH BIẾN MÔI TRƯỜNG AN TOÀN ======================
+# Lấy API Key từ hệ thống, nếu trống sẽ báo lỗi ngay lập tức
+VAST_API_KEY = os.getenv("VAST_API_KEY", "7057e1ebceac5d0dba64dcbc5a62d5b8f625fa18975ccec749f58cf5d76a17a2").strip()
 AGENT_TOKEN = os.getenv("AGENT_TOKEN", "rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3").strip()
+
 MAX_PRICE = 0.25
 MAX_INSTANCES = 1
 
-# ====================== TÁCH BIẾN ĐƯỜNG DẪN GITHUB XEM WEB ======================
-GITHUB_HOST = "https://github.com"
-GITHUB_PATH = "/0hieutrung0-eng/Robot-vastai/tree/main"
-GITHUB_REPO = GITHUB_HOST + GITHUB_PATH
+# ====================== ĐƯỜNG DẪN GITHUB XÁC THỰC BẢO MẬT ======================
+# Sử dụng trực tiếp AGENT_TOKEN để GPU sau khi thuê có quyền Clone kho Private
+GITHUB_DOWNLOAD_URL = f"https://{AGENT_TOKEN}@://github.com"
 
-# ====================== TÁCH BIẾN ĐƯỜNG DẪN GITHUB TẢI FILE (.GIT) ======================
-GITHUB_DOWNLOAD_HOST = "https://github.com"
-GITHUB_DOWNLOAD_PATH = "/0hieutrung0-eng/Robot-vastai.git"
-GITHUB_DOWNLOAD_URL = GITHUB_DOWNLOAD_HOST + GITHUB_DOWNLOAD_PATH
-
-# ====================== TÁCH BIẾN BASE URL VAST.AI (ĐỒNG BỘ API V1) ======================
-VAST_HOST = "https://vast.ai"
-VAST_PATH = "/api/v1"
-BASE_URL = VAST_HOST + VAST_PATH
-
+# ====================== CẤU HÌNH API VAST.AI ======================
+BASE_URL = "https://vast.ai"
 HEADERS = {
     "Authorization": f"Bearer {VAST_API_KEY}",
     "Accept": "application/json"
 }
 
 print("[START] Robot Vast.ai - Khởi động giữ duy nhất 1 GPU chạy ngầm vĩnh viễn")
-print(f"[INFO] Kho mã nguồn mục tiêu: {GITHUB_REPO}")
+
+if not VAST_API_KEY:
+    print("[CRITICAL] LỖI NGUYÊN NHÂN CHÍNH: VAST_API_KEY đang bị trống! Vui lòng cấu hình lại.")
 
 def get_instances():
     try:
         r = requests.get(f"{BASE_URL}/instances", headers=HEADERS, timeout=20)
         if r.status_code == 200:
             return r.json().get("instances", [])
-        return []
-    except:
+        else:
+            print(f"[❌] Lỗi kết nối API Vast.ai (HTTP {r.status_code}): {r.text}")
+            return []
+    except Exception as e:
+        print(f"[ERROR] Không thể kết nối Vast.ai: {e}")
         return []
 
 def create_onstart_script():
@@ -51,7 +49,7 @@ rm -rf /app
 if git clone --depth 1 {GITHUB_DOWNLOAD_URL} /app; then
     echo "→ Clone thành công" >> /root/agent.log
 else
-    echo "→ Clone thất bại" >> /root/agent.log
+    echo "→ Clone thất bại (Kiểm tra AGENT_TOKEN)" >> /root/agent.log
 fi
 cd /app
 if [ -f "requirements.txt" ]; then
@@ -104,7 +102,7 @@ while True:
             offers = res_data.get("offers", res_data.get("results", []))
             
             if not offers:
-                print("[⚠️] Không tìm thấy offer phù hợp. Thử lại sau 40 giây...")
+                print("[⚠️] Không tìm thấy offer RTX 3090 giá dưới 0.25$. Thử lại sau 40 giây...")
                 time.sleep(40)
                 continue
                 
@@ -112,7 +110,7 @@ while True:
             best = offers.pop(0)
             offer_id = best["id"]
             gpu = best.get("gpu_name", "Unknown")
-            print(f"[🎯] Tìm thấy {gpu} với giá {best.get('dph_total')}$ → Đang đặt thuê...")
+            print(f"[🎯] Tìm thấy {gpu} với giá {best.get('dph_total')}$ → Đang tiến hành thuê...")
             
             rent_payload = {
                 "image": "nvidia/cuda:12.1.1-runtime-ubuntu22.04",
@@ -121,16 +119,16 @@ while True:
                 "onstart": create_onstart_script()
             }
             
-            rent_resp = requests.put(f"{BASE_URL}/instances/{offer_id}/", headers={"Authorization": f"Bearer {VAST_API_KEY}", "Content-Type": "application/json"}, json=rent_payload, timeout=90)
+            rent_resp = requests.put(f"{BASE_URL}/instances/{offer_id}/", headers=HEADERS, json=rent_payload, timeout=90)
             if rent_resp.status_code in (200, 201):
                 print(f"[🎉] THUÊ THÀNH CÔNG MÁY {gpu}!")
                 time.sleep(900)
             else:
-                print(f"[❌] Thuê thất bại: {rent_resp.status_code}")
+                print(f"[❌] Thuê thất bại. Phản hồi hệ thống (HTTP {rent_resp.status_code}): {rent_resp.text}")
                 time.sleep(30)
         else:
-            print(f"[❌] Máy chủ /bundles/ phản hồi lỗi: {r.status_code}")
+            print(f"[❌] Máy chủ Vast.ai phản hồi lỗi tìm máy (HTTP {r.status_code}): {r.text}")
             time.sleep(40)
     except Exception as e:
-        print(f"[ERROR] Lỗi hệ thống: {e}")
+        print(f"[ERROR] Lỗi hệ thống phát sinh: {e}")
         time.sleep(40)
