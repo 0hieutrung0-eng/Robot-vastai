@@ -19,22 +19,23 @@ GITHUB_DOWNLOAD_HOST = "https://github.com"
 GITHUB_DOWNLOAD_PATH = "/0hieutrung0-eng/Robot-vastai.git"
 GITHUB_DOWNLOAD_URL = GITHUB_DOWNLOAD_HOST + GITHUB_DOWNLOAD_PATH
 
-# ====================== TÁCH BIẾN BASE URL VAST.AI ======================
-VAST_HOST = "https://console.vast.ai"
-VAST_PATH = "/api/v0"
+# ====================== TÁCH BIẾN BASE URL VAST.AI (ĐỒNG BỘ API V1) ======================
+VAST_HOST = "https://vast.ai"
+VAST_PATH = "/api/v1"
 BASE_URL = VAST_HOST + VAST_PATH
 
 HEADERS = {
     "Authorization": f"Bearer {VAST_API_KEY}",
-    "Content-Type": "application/json"
+    "Accept": "application/json"
 }
 
-print("[START] Robot Vast.ai - Khởi động giữ duy nhất 1 GPU")
+print("[START] Robot Vast.ai - Khởi động giữ duy nhất 1 GPU (API v1 chuẩn hóa)")
 print(f"[INFO] Kho mã nguồn mục tiêu: {GITHUB_REPO}")
 
 def get_instances():
     try:
-        r = requests.get(f"{BASE_URL}/instances/", headers=HEADERS, timeout=20)
+        # BẮT BUỘC: Sử dụng API v1 endpoint để không bị lỗi deprecated_endpoint
+        r = requests.get(f"{BASE_URL}/instances", headers=HEADERS, timeout=20)
         if r.status_code == 200:
             return r.json().get("instances", [])
         else:
@@ -45,7 +46,6 @@ def get_instances():
         return []
 
 def create_onstart_script():
-    # Sử dụng GITHUB_DOWNLOAD_URL bọc chuỗi ghép tách biến để máy ảo không lỗi lệnh tải code
     return f"""#!/bin/bash
 echo "=== Agent OnStart Started - $(date) ===" > /root/agent.log
 apt-get update && apt-get install -y git python3-pip curl
@@ -83,14 +83,14 @@ while True:
         status = str(inst.get("status", "")).lower()
         gpu_name = inst.get("gpu_name", "Unknown")
         
-        # Dọn dẹp máy lỗi hệ thống
+        # Dọn dẹp máy lỗi hệ thống qua API v1
         if status in ["error", "dead", "stopped", "failed"]:
             print(f" 🗑️ Xóa máy lỗi: {gpu_name} (ID: {inst_id})")
             requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS, timeout=15)
             time.sleep(8)
         elif status in ACTIVE_STATUS:
             valid_kept += 1
-            # Xóa các máy phụ thừa thãi nếu vượt định mức
+            # Xóa máy phụ thừa thãi nếu vượt định mức
             if valid_kept > MAX_INSTANCES:
                 print(f" 🗑️ Xóa máy thừa: {gpu_name} (ID: {inst_id})")
                 requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS, timeout=15)
@@ -101,25 +101,23 @@ while True:
         time.sleep(480)
         continue
 
-    # ====================== TIẾN HÀNH TÌM VÀ ĐẶT THUÊ ======================
+    # ====================== TIẾN HÀNH TÌM VÀ ĐẶT THUÊ ĐỒNG BỘ API V1 ======================
     print("[🔍] Đang tìm máy RTX 3090 series...")
     
-    # Cấu trúc phẳng POST nới lỏng bộ lọc càn quét diện rộng máy External/Unverified giá siêu rẻ
-    search_payload = {
-        "rentable": True,
-        "rented": False,
-        "dph_total_lte": MAX_PRICE,
-        "gpu_name_contains": "3090",
-        "order": [["dph_total", "asc"]],
-        "limit": 5
+    # Sử dụng cấu trúc JSON Query lồng nhau chuẩn chỉnh tương thích 100% với GET /api/v1/bundles
+    query_filter = {
+        "rentable": {"eq": True},
+        "rented": {"eq": False},
+        "dph_total": {"lte": MAX_PRICE},
+        "gpu_name": {"contains": "3090"}
     }
     
     try:
-        resp = requests.post(f"{BASE_URL}/bundles/", headers=HEADERS, json=search_payload, timeout=20)
+        # Gửi phương thức GET kèm tham số q và quy định thứ tự sắp xếp tăng dần từ Vast.ai v1
+        r = requests.get(f"{BASE_URL}/bundles", headers=HEADERS, params={"q": json.dumps(query_filter)}, timeout=20)
         
-        if resp.status_code == 200:
-            res_data = resp.json()
-            # Giải pháp fallback dự phòng cấu trúc tên mảng trả về của Vast.ai
+        if r.status_code == 200:
+            res_data = r.json()
             offers = res_data.get("offers", res_data.get("results", []))
             
             if not offers:
@@ -127,7 +125,9 @@ while True:
                 time.sleep(40)
                 continue
                 
-            # ĐÃ KHẮC PHỤC BIẾN HÀM HIỂN THỊ: Sử dụng .pop(0) lấy máy rẻ nhất đứng đầu danh sách
+            # Sắp xếp các ưu đãi theo giá từ thấp đến cao (Tái tạo lại tính năng order asc của bạn)
+            offers.sort(key=lambda x: x.get("dph_total", 999))
+            
             best = offers.pop(0)
             offer_id = best["id"]
             gpu = best.get("gpu_name", "Unknown")
@@ -140,18 +140,23 @@ while True:
                 "onstart": create_onstart_script()
             }
             
-            # Đặt lệnh mua máy thông qua đúng API endpoint kích hoạt của Vast.ai v0
-            rent_resp = requests.put(f"{BASE_URL}/asks/{offer_id}/", headers=HEADERS, json=rent_payload, timeout=90)
+            # ĐẶT LỆNH THUÊ: Sử dụng endpoint PUT /api/v1/instances/{id}/ chuẩn xác tuyệt đối của v1
+            rent_resp = requests.put(
+                f"{BASE_URL}/instances/{offer_id}/", 
+                headers={"Authorization": f"Bearer {VAST_API_KEY}", "Content-Type": "application/json"}, 
+                json=rent_payload, 
+                timeout=90
+            )
             
             if rent_resp.status_code in (200, 201):
                 print(f"[🎉] THUÊ THÀNH CÔNG MÁY {gpu}!")
-                time.sleep(900)  # Tạm nghỉ 15 phút chờ máy khởi tạo hệ điều hành
+                time.sleep(900)  # Chờ 15 phút để máy khởi động ổn định
             else:
                 print(f"[❌] Thuê thất bại. Mã trạng thái API: {rent_resp.status_code}")
                 print(f"Chi tiết phản hồi lỗi: {rent_resp.text[:500]}")
                 time.sleep(30)
         else:
-            print(f"[❌] Máy chủ /bundles/ phản hồi lỗi: {resp.status_code}. Thử lại sau 40 giây...")
+            print(f"[❌] Máy chủ /bundles/ phản hồi lỗi: {r.status_code}. Thử lại sau 40 giây...")
             time.sleep(40)
             
     except Exception as e:
