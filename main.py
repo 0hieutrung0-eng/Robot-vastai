@@ -42,11 +42,10 @@ GITHUB_DOWNLOAD_HOST = "https://github.com"
 GITHUB_DOWNLOAD_PATH = "/0hieutrung0-eng/Robot-vastai.git"
 
 VAST_HOST = "https://vast.ai"
-# CẬP NHẬT: Đổi từ v0 sang v1 theo yêu cầu hệ thống mới của Vast.ai
 VAST_PATH = "/api/v1"
 BASE_URL = VAST_HOST + VAST_PATH
 
-# Header chuẩn xác theo yêu cầu hệ thống xác thực của Vast.ai v1
+# Header chuẩn xác theo yêu cầu hệ thống xác thực mới của Vast.ai
 HEADERS = {
     "Accept": "application/json",
     "Authorization": f"Bearer {VAST_API_KEY}",
@@ -58,7 +57,7 @@ def print_and_log(msg):
     SYSTEM_STATUS = msg
     print(msg, flush=True)
 
-print_and_log("[START] Robot Vast.ai v1 - Khởi động giữ duy nhất 1 GPU chạy ngầm vĩnh viễn")
+print_and_log("[START] Robot Vast.ai Fixed v1 - Khởi động giữ duy nhất 1 GPU")
 
 if not VAST_API_KEY or not AGENT_TOKEN:
     print_and_log("[❌] LỖI CẤU HÌNH: Vui lòng điền VAST_API_KEY và AGENT_TOKEN vào Environment Variables!")
@@ -69,11 +68,12 @@ print_and_log(f"[INFO] Kho mã nguồn mục tiêu: {GITHUB_REPO}")
 
 
 # ==============================================================================
-# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI V1
+# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI
 # ==============================================================================
 def get_instances():
     try:
-        print_and_log("[📡] Đang gửi yêu cầu lấy danh sách máy từ Vast.ai API v1...")
+        print_and_log("[📡] Đang gửi yêu cầu lấy danh sách máy từ Vast.ai...")
+        # Bỏ dấu gạch chéo cuối URL để tránh 404 tùy cấu hình server
         r = requests.get(f"{BASE_URL}/instances", headers=HEADERS, timeout=20)
         
         if r.status_code == 200:
@@ -149,7 +149,7 @@ while True:
 
     print_and_log(f"[🔍] Số máy hoạt động ({valid_kept}) thấp hơn chỉ tiêu ({MAX_INSTANCES}). Tiến hành quét tìm RTX 3090...")
     
-    # Định dạng bộ lọc truy vấn tương thích chuẩn API v1 mới
+    # Định dạng bộ lọc chuẩn v1 cho endpoint bundles
     query_filter = {
         "rentable": {"eq": True},
         "rented": {"eq": False},
@@ -162,8 +162,8 @@ while True:
     }
     
     try:
-        print_and_log("[📡] Đang gửi bộ lọc tìm kiếm máy giá rẻ lên thị trường Vast.ai v1...")
-        # API v1 lấy danh sách bundle (thị trường)
+        print_and_log("[📡] Đang gửi bộ lọc tìm kiếm máy giá rẻ lên thị trường Vast.ai...")
+        # Đảm bảo đường dẫn endpoint chính xác cho v1 không bị redirect trả về HTML
         r = requests.get(f"{BASE_URL}/bundles", headers=HEADERS, params=search_params, timeout=20)
         
         if r.status_code == 200:
@@ -196,9 +196,9 @@ while True:
                 "onstart": create_onstart_script()
             }
             
-            # CẬP NHẬT CHUẨN V1: Phương thức POST và endpoint /asks/{id}/ để đặt thuê máy
+            # Đảm bảo endpoint tạo máy từ bundle id không lỗi 404 trên v1
             rent_resp = requests.post(
-                f"{BASE_URL}/asks/{offer_id}/", 
+                f"{BASE_URL}/asks/{offer_id}", 
                 headers=HEADERS, 
                 json=rent_payload, 
                 timeout=90
