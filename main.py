@@ -41,11 +41,11 @@ GITHUB_REPO = GITHUB_HOST + GITHUB_PATH
 GITHUB_DOWNLOAD_HOST = "https://github.com"
 GITHUB_DOWNLOAD_PATH = "/0hieutrung0-eng/Robot-vastai.git"
 
-VAST_HOST = "https://vast.ai"
+# SỬA ĐỔI QUAN TRỌNG: Đổi domain từ vast.ai sang console.vast.ai theo chuẩn tài liệu hệ thống
+VAST_HOST = "https://console.vast.ai"
 VAST_PATH = "/api/v1"
 BASE_URL = VAST_HOST + VAST_PATH
 
-# Header chuẩn xác theo yêu cầu hệ thống xác thực của Vast.ai
 HEADERS = {
     "Accept": "application/json",
     "Content-Type": "application/json"
@@ -56,7 +56,7 @@ def print_and_log(msg):
     SYSTEM_STATUS = msg
     print(msg, flush=True)
 
-print_and_log("[START] Robot Vast.ai Final v1 - Khởi động giữ duy nhất 1 GPU")
+print_and_log("[START] Robot Vast.ai Console API v1 - Khởi động giữ duy nhất 1 GPU")
 
 if not VAST_API_KEY or not AGENT_TOKEN:
     print_and_log("[❌] LỖI CẤU HÌNH: Vui lòng điền VAST_API_KEY và AGENT_TOKEN vào Environment Variables!")
@@ -67,12 +67,11 @@ print_and_log(f"[INFO] Kho mã nguồn mục tiêu: {GITHUB_REPO}")
 
 
 # ==============================================================================
-# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI
+# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI VIA CONSOLE
 # ==============================================================================
 def get_instances():
     try:
-        print_and_log("[📡] Đang gửi yêu cầu lấy danh sách máy từ Vast.ai...")
-        # Đưa api_key trực tiếp vào params kèm dấu gạch chéo cuối url để tránh 404/Redirect
+        print_and_log("[📡] Đang gửi yêu cầu lấy danh sách máy từ Vast.ai Console API...")
         r = requests.get(
             f"{BASE_URL}/instances/", 
             headers=HEADERS, 
@@ -153,7 +152,7 @@ while True:
 
     print_and_log(f"[🔍] Số máy hoạt động ({valid_kept}) thấp hơn chỉ tiêu ({MAX_INSTANCES}). Tiến hành quét tìm RTX 3090...")
     
-    # Bộ lọc tìm kiếm máy
+    # Định dạng cấu trúc truy vấn bộ lọc
     query_filter = {
         "rentable": {"eq": True},
         "rented": {"eq": False},
@@ -168,7 +167,6 @@ while True:
     
     try:
         print_and_log("[📡] Đang gửi bộ lọc tìm kiếm máy giá rẻ lên thị trường Vast.ai...")
-        # Endpoint bundles/ có dấu gạch chéo cuối cùng
         r = requests.get(f"{BASE_URL}/bundles/", headers=HEADERS, params=search_params, timeout=20)
         
         if r.status_code == 200:
@@ -201,7 +199,6 @@ while True:
                 "onstart": create_onstart_script()
             }
             
-            # Thực hiện đặt thuê với phương thức POST, có trailing slash và kèm api_key params
             rent_resp = requests.post(
                 f"{BASE_URL}/asks/{offer_id}/", 
                 headers=HEADERS, 
