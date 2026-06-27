@@ -6,10 +6,7 @@ import json
 # ====================== CẤU HÌNH GỐC NGUYÊN BẢN CỦA BẠN ======================
 VAST_API_KEY = os.getenv("VAST_API_KEY", "").strip()
 AGENT_TOKEN = os.getenv("AGENT_TOKEN", "rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3").strip()
-
-# ====================== TỐI ƯU HÓA ĐIỀU KIỆN LỌC GIÁ ======================
-# MAX_GPU_PRICE là giá thuê card GPU gốc hiển thị trên giao diện Web (Ví dụ: 0.25)
-MAX_GPU_PRICE = 0.26  
+MAX_PRICE = 0.30
 MAX_INSTANCES = 1
 
 # ====================== TÁCH BIẾN ĐƯỜNG DẪN GITHUB XEM WEB ======================
@@ -23,7 +20,7 @@ GITHUB_DOWNLOAD_PATH = "/0hieutrung0-eng/Robot-vastai.git"
 GITHUB_DOWNLOAD_URL = GITHUB_DOWNLOAD_HOST + GITHUB_DOWNLOAD_PATH
 
 # ====================== TÁCH BIẾN BASE URL VAST.AI ======================
-VAST_HOST = "https://console.vast.ai"
+VAST_HOST = "https://vast.ai"
 VAST_PATH = "/api/v1"
 BASE_URL = VAST_HOST + VAST_PATH
 
@@ -32,7 +29,7 @@ HEADERS = {
     "Accept": "application/json"
 }
 
-print("[START] Robot Vast.ai - Tự động thuê GPU (Đã cập nhật bộ lọc)")
+print("[START] Robot Vast.ai - Tự động thuê GPU")
 print(f"[INFO] Kho mã nguồn mục tiêu: {GITHUB_REPO}")
 
 def get_instances():
@@ -67,16 +64,15 @@ while True:
 
     # Thuê mới nếu chưa có máy
     if active < MAX_INSTANCES:
-        print(f"[🔍] Tìm máy RTX 3090 giá GPU dưới {MAX_GPU_PRICE}$...")
+        print("[🔍] Tìm máy RTX 3090...")
         
-        # SỬA ĐỔI QUAN TRỌNG: Lọc chính xác giá card bằng dpgh (Dollar Per GPU Hour) thay vì dph_total
+        # ĐÃ SỬA DỨT ĐIỂM: Xóa hoàn toàn 'verified' và 'external' để quét sạch tất cả máy rẻ trên điện thoại của bạn
         payload = {
-            "external": {"eq": False},
             "rentable": {"eq": True},
             "rented": {"eq": False},
-            "dpgh": {"lte": MAX_GPU_PRICE},  
+            "dph_total": {"lte": MAX_PRICE},
             "gpu_name": {"contains": "RTX 3090"},
-            "num_gpus": {"eq": 1}
+            "num_gpus": {"gte": 1}
         }
         
         try:
@@ -86,15 +82,14 @@ while True:
             offers = res_data.get("offers", res_data.get("results", []))
             
             if offers:
-                # Sắp xếp các ưu đãi theo giá từ thấp đến cao dựa trên trường giá gốc gpu (dpgh)
-                offers.sort(key=lambda x: x.get("dpgh", 999))
+                # Sắp xếp các ưu đãi theo giá từ thấp đến cao
+                offers.sort(key=lambda x: x.get("dph_total", 999))
                 best = offers.pop(0)
-                print(f"[🎯] Phát hiện máy phù hợp! ID: {best.get('id')} | Giá gốc GPU: {best.get('dpgh')}$ | Tổng giá thực tế: {best.get('dph_total')}$")
+                print(f"[🎯] Thuê {best.get('gpu_name')} - Giá: {best.get('dph_total')}$")
                 
-                # TỐI ƯU HÓA Ổ ĐĨA: Giảm disk xuống 20GB giúp hạ chi phí lưu trữ phát sinh
                 rent_payload = {
                     "image": "nvidia/cuda:11.7.1-runtime-ubuntu22.04",
-                    "disk": 20.0,
+                    "disk": 40.0,
                     "runtype": "ssh_direct",
                     "onstart": create_onstart_script()
                 }
@@ -107,13 +102,13 @@ while True:
                 )
                 
                 if rent_resp.status_code in (200, 201):
-                    print("[🎉] THUÊ THÀNH CÔNG VÀ ĐANG KHỞI TẠO MÁY!")
+                    print("[🎉] THUÊ THÀNH CÔNG!")
                     time.sleep(900)
                 else:
                     print(f"[❌] Lỗi đặt thuê từ Vast.ai: {rent_resp.status_code} - {rent_resp.text}")
                     time.sleep(30)
             else:
-                print(f"[⏳] Không tìm thấy máy RTX 3090 nào có giá GPU <= {MAX_GPU_PRICE}$. Quét lại sau 1 phút...")
+                print(f"[⏳] Không có máy giá dưới {MAX_PRICE}$. Thử lại sau 1 phút...")
                 time.sleep(60)
         except Exception as e:
             print(f"[ERROR] Lỗi trong quá trình xử lý: {e}")
