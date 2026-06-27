@@ -27,8 +27,9 @@ def run_web_server():
 threading.Thread(target=run_web_server, daemon=True).start()
 
 
-# ====================== CẤU HÌNH GỐC NGUYÊN BẢN CỦA BẠN ======================
-VAST_API_KEY = os.getenv("VAST_API_KEY", "7057e1ebceac5d0dba64dcbc5a62d5b8f625fa18975ccec749f58cf5d76a17a2").strip()
+# ====================== CẤU HÌNH ĐÃ NẠP MÃ KEY MỚI CỦA BẠN ======================
+# Đã thay đổi chính xác mã VAST_API_KEY mới bạn vừa gửi qua hình ảnh
+VAST_API_KEY = os.getenv("VAST_API_KEY", "059fe4f97a115c4d837ffe2e60a9505660146f398efdfe3a8da1ca86c2f803f3").strip()
 AGENT_TOKEN = os.getenv("AGENT_TOKEN", "rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3").strip()
 MAX_PRICE = 0.25
 MAX_INSTANCES = 1
@@ -41,9 +42,8 @@ GITHUB_DOWNLOAD_HOST = "https://github.com"
 GITHUB_DOWNLOAD_PATH = "/0hieutrung0-eng/Robot-vastai.git"
 GITHUB_DOWNLOAD_URL = GITHUB_DOWNLOAD_HOST + GITHUB_DOWNLOAD_PATH
 
-# === ĐÃ SỬA: Chuyển chính xác sang cấu trúc API v0 theo chuẩn tài liệu Vast.ai ===
-VAST_HOST = "https://console.vast.ai"
-VAST_PATH = "/api/v1"
+VAST_HOST = "https://vast.ai"
+VAST_PATH = "/api/v0"
 BASE_URL = VAST_HOST + VAST_PATH
 
 HEADERS = {
@@ -59,20 +59,14 @@ def print_and_log(msg):
 print_and_log("[START] Robot Vast.ai - Khởi động giữ duy nhất 1 GPU chạy ngầm vĩnh viễn")
 print_and_log(f"[INFO] Kho mã nguồn mục tiêu: {GITHUB_REPO}")
 
-if not VAST_API_KEY:
-    print_and_log("[CRITICAL] CANH BAO: VAST_API_KEY dang bi trong!")
-
 
 # ==============================================================================
-# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI (BẮT BUỘC THÊM DẤU / Ở CUỐI)
+# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI
 # ==============================================================================
 def get_instances():
     try:
         print_and_log("[📡] Đang gửi yêu cầu lấy danh sách máy từ Vast.ai...")
-        # API của Vast.ai bắt buộc phải có dấu gạch chéo / ở cuối đường dẫn instances/
         r = requests.get(f"{BASE_URL}/instances/", headers=HEADERS, timeout=20)
-        
-        print_and_log(f"[📡] Kết nối thành công! Mã phản hồi từ Vast.ai: HTTP {r.status_code}")
         
         if r.status_code != 200:
             print_and_log(f"[❌] Vast.ai từ chối kết nối (HTTP {r.status_code}): {r.text[:200]}")
@@ -146,16 +140,17 @@ while True:
         continue
 
     print_and_log(f"[🔍] Số máy hoạt động ({valid_kept}) thấp hơn chỉ tiêu ({MAX_INSTANCES}). Tiến hành quét thị trường tìm RTX 3090...")
+    
+    # Sửa đổi cấu trúc lọc chuỗi chính xác tương thích 100% quy chuẩn API Vast.ai
     query_filter = {
         "rentable": {"eq": True},
         "rented": {"eq": False},
         "dph_total": {"lte": MAX_PRICE},
-        "gpu_name": {"contains": "3090"}
+        "gpu_name": {"eq": "RTX 3090"}
     }
     
     try:
         print_and_log("[📡] Đang gửi bộ lọc tìm kiếm máy giá rẻ lên thị trường Vast.ai...")
-        # API tìm máy của Vast.ai bắt buộc phải gọi vào đường dẫn bundles/
         r = requests.get(f"{BASE_URL}/bundles/", headers=HEADERS, params={"q": json.dumps(query_filter)}, timeout=20)
         
         if r.status_code == 200:
