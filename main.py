@@ -41,7 +41,6 @@ GITHUB_REPO = GITHUB_HOST + GITHUB_PATH
 GITHUB_DOWNLOAD_HOST = "https://github.com"
 GITHUB_DOWNLOAD_PATH = "/0hieutrung0-eng/Robot-vastai.git"
 
-# SỬA ĐỔI QUAN TRỌNG: Đổi domain từ vast.ai sang console.vast.ai theo chuẩn tài liệu hệ thống
 VAST_HOST = "https://console.vast.ai"
 VAST_PATH = "/api/v1"
 BASE_URL = VAST_HOST + VAST_PATH
@@ -56,7 +55,7 @@ def print_and_log(msg):
     SYSTEM_STATUS = msg
     print(msg, flush=True)
 
-print_and_log("[START] Robot Vast.ai Console API v1 - Khởi động giữ duy nhất 1 GPU")
+print_and_log("[START] Robot Vast.ai Console API v1 (Fixed Bundles) - Khởi động")
 
 if not VAST_API_KEY or not AGENT_TOKEN:
     print_and_log("[❌] LỖI CẤU HÌNH: Vui lòng điền VAST_API_KEY và AGENT_TOKEN vào Environment Variables!")
@@ -67,13 +66,13 @@ print_and_log(f"[INFO] Kho mã nguồn mục tiêu: {GITHUB_REPO}")
 
 
 # ==============================================================================
-# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI VIA CONSOLE
+# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI
 # ==============================================================================
 def get_instances():
     try:
         print_and_log("[📡] Đang gửi yêu cầu lấy danh sách máy từ Vast.ai Console API...")
         r = requests.get(
-            f"{BASE_URL}/instances/", 
+            f"{BASE_URL}/instances", 
             headers=HEADERS, 
             params={"api_key": VAST_API_KEY}, 
             timeout=20
@@ -134,13 +133,13 @@ while True:
         
         if status in ["error", "dead", "stopped", "failed"]:
             print_and_log(f" 🗑️ Phát hiện máy lỗi -> Tiến hành xóa: {gpu_name} (ID: {inst_id})")
-            requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS, params={"api_key": VAST_API_KEY}, timeout=15)
+            requests.delete(f"{BASE_URL}/instances/{inst_id}", headers=HEADERS, params={"api_key": VAST_API_KEY}, timeout=15)
             time.sleep(8)
         elif status in ACTIVE_STATUS:
             valid_kept += 1
             if valid_kept > MAX_INSTANCES:
                 print_and_log(f" 🗑️ Phát hiện máy dư thừa -> Tiến hành xóa máy thừa: {gpu_name} (ID: {inst_id})")
-                requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS, params={"api_key": VAST_API_KEY}, timeout=15)
+                requests.delete(f"{BASE_URL}/instances/{inst_id}", headers=HEADERS, params={"api_key": VAST_API_KEY}, timeout=15)
                 time.sleep(8)
                 
     if valid_kept >= MAX_INSTANCES:
@@ -152,12 +151,12 @@ while True:
 
     print_and_log(f"[🔍] Số máy hoạt động ({valid_kept}) thấp hơn chỉ tiêu ({MAX_INSTANCES}). Tiến hành quét tìm RTX 3090...")
     
-    # Định dạng cấu trúc truy vấn bộ lọc
+    # Chuẩn hóa cấu trúc bộ lọc tương thích chính xác với endpoint /bundles mới của v1
     query_filter = {
-        "rentable": {"eq": True},
-        "rented": {"eq": False},
+        "rentable": True,
+        "rented": False,
         "dph_total": {"lte": MAX_PRICE},
-        "gpu_name": {"eq": "GeForce RTX 3090"}
+        "gpu_name": "GeForce RTX 3090"
     }
     
     search_params = {
@@ -167,7 +166,8 @@ while True:
     
     try:
         print_and_log("[📡] Đang gửi bộ lọc tìm kiếm máy giá rẻ lên thị trường Vast.ai...")
-        r = requests.get(f"{BASE_URL}/bundles/", headers=HEADERS, params=search_params, timeout=20)
+        # SỬA ĐỔI QUAN TRỌNG: Loại bỏ dấu gạch chéo cuối cùng tại endpoint /bundles để sửa lỗi 404 Not Found
+        r = requests.get(f"{BASE_URL}/bundles", headers=HEADERS, params=search_params, timeout=20)
         
         if r.status_code == 200:
             try:
@@ -199,8 +199,9 @@ while True:
                 "onstart": create_onstart_script()
             }
             
+            # Đồng bộ endpoint đặt thuê chuẩn v1 (không chứa dấu gạch chéo cuối)
             rent_resp = requests.post(
-                f"{BASE_URL}/asks/{offer_id}/", 
+                f"{BASE_URL}/asks/{offer_id}", 
                 headers=HEADERS, 
                 params={"api_key": VAST_API_KEY},
                 json=rent_payload, 
