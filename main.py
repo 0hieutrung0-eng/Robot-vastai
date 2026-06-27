@@ -26,16 +26,15 @@ BASE_URL = VAST_HOST + VAST_PATH
 
 HEADERS = {
     "Authorization": f"Bearer {VAST_API_KEY}",
-    "Content-Type": "application/json",
     "Accept": "application/json"
 }
 
-print("[START] Robot Vast.ai - Tự động thuê GPU (Đã bọc chuỗi Query)")
+print("[START] Robot Vast.ai - Tự động thuê GPU (Đã đồng bộ chuẩn GET Query)")
 print(f"[INFO] Kho mã nguồn mục tiêu: {GITHUB_REPO}")
 
 def get_instances():
     try:
-        r = requests.get(f"{BASE_URL}/instances/", headers=HEADERS, timeout=20)
+        r = requests.get(f"{BASE_URL}/instances", headers=HEADERS, timeout=20)
         return r.json().get("instances", []) if r.status_code == 200 else []
     except:
         return []
@@ -67,24 +66,17 @@ while True:
     if active < MAX_INSTANCES:
         print("[🔍] Tìm máy RTX 3090...")
         
-        # Tạo khối điều kiện lọc phần cứng nới lỏng tối đa để càn quét trúng máy rẻ
+        # Bộ lọc nới lỏng tối đa: Không chặn Verified, không chặn External, nhận diện mọi máy rẻ nhất
         query_filter = {
             "rentable": {"eq": True},
             "rented": {"eq": False},
-            "type": "ondemand",
             "dph_total": {"lte": MAX_PRICE},
-            "gpu_name": {"in": ["RTX 3090"]},
-            "num_gpus": {"gte": 1}
-        }
-        
-        # BẮT BUỘC: Ép khối điều kiện thành chuỗi string gán vào biến 'q' đúng tài liệu kỹ thuật
-        payload = {
-            "q": json.dumps(query_filter)
+            "gpu_name": {"contains": "3090"}
         }
         
         try:
-            # Gửi payload bọc chuỗi qua phương thức POST lên endpoint /bundles/
-            r = requests.post(f"{BASE_URL}/bundles/", headers=HEADERS, json=payload, timeout=20)
+            # Gửi yêu cầu GET mã hóa chuỗi bộ lọc JSON qua tham số q chuẩn xác tài liệu kỹ thuật
+            r = requests.get(f"{BASE_URL}/bundles", headers=HEADERS, params={"q": json.dumps(query_filter)}, timeout=20)
             
             if r.status_code == 200:
                 res_data = r.json()
@@ -103,10 +95,10 @@ while True:
                         "onstart": create_onstart_script()
                     }
                     
-                    # Gọi chuẩn endpoint PUT /instances/{id}/ để đặt thuê máy ảo mới
+                    # Gọi chuẩn endpoint PUT /instances/{id}/ để đặt thuê máy ảo mới ổn định
                     rent_resp = requests.put(
                         f"{BASE_URL}/instances/{best['id']}/", 
-                        headers=HEADERS, 
+                        headers={"Authorization": f"Bearer {VAST_API_KEY}", "Content-Type": "application/json"}, 
                         json=rent_payload, 
                         timeout=30
                     )
@@ -121,11 +113,11 @@ while True:
                     print(f"[⏳] Không có máy giá dưới {MAX_PRICE}$. Thử lại sau 1 phút...")
                     time.sleep(60)
             else:
-                print(f"[❌] Máy chủ APIbundles phản hồi mã lỗi: {r.status_code} - {r.text}. Thử lại sau 1 phút...")
+                print(f"[❌] Máy chủ APIbundles phản hồi mã lỗi: {r.status_code}. Thử lại sau 1 phút...")
                 time.sleep(60)
                 
         except Exception as e:
-            print(f"[ERROR] Lỗi hệ thống: {e}")
+            print(f"[ERROR] Lỗi hệ thống ngoài ý muốn: {e}")
             time.sleep(60)
     else:
         time.sleep(120)
