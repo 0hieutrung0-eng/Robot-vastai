@@ -41,9 +41,9 @@ GITHUB_DOWNLOAD_HOST = "https://github.com"
 GITHUB_DOWNLOAD_PATH = "/0hieutrung0-eng/Robot-vastai.git"
 GITHUB_DOWNLOAD_URL = GITHUB_DOWNLOAD_HOST + GITHUB_DOWNLOAD_PATH
 
-# === ĐÃ SỬA: Đổi từ vast.ai sang console.vast.ai để sửa triệt để lỗi HTTP 404 ===
-VAST_HOST = "https://vast.ai"
-VAST_PATH = "/api/v1"
+# === ĐÃ SỬA: Chuyển chính xác sang cấu trúc API v0 theo chuẩn tài liệu Vast.ai ===
+VAST_HOST = "https://console.vast.ai"
+VAST_PATH = "/api/v0"
 BASE_URL = VAST_HOST + VAST_PATH
 
 HEADERS = {
@@ -64,12 +64,13 @@ if not VAST_API_KEY:
 
 
 # ==============================================================================
-# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI
+# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI (BẮT BUỘC THÊM DẤU / Ở CUỐI)
 # ==============================================================================
 def get_instances():
     try:
         print_and_log("[📡] Đang gửi yêu cầu lấy danh sách máy từ Vast.ai...")
-        r = requests.get(f"{BASE_URL}/instances", headers=HEADERS, timeout=20)
+        # API của Vast.ai bắt buộc phải có dấu gạch chéo / ở cuối đường dẫn instances/
+        r = requests.get(f"{BASE_URL}/instances/", headers=HEADERS, timeout=20)
         
         print_and_log(f"[📡] Kết nối thành công! Mã phản hồi từ Vast.ai: HTTP {r.status_code}")
         
@@ -154,7 +155,8 @@ while True:
     
     try:
         print_and_log("[📡] Đang gửi bộ lọc tìm kiếm máy giá rẻ lên thị trường Vast.ai...")
-        r = requests.get(f"{BASE_URL}/bundles", headers=HEADERS, params={"q": json.dumps(query_filter)}, timeout=20)
+        # API tìm máy của Vast.ai bắt buộc phải gọi vào đường dẫn bundles/
+        r = requests.get(f"{BASE_URL}/bundles/", headers=HEADERS, params={"q": json.dumps(query_filter)}, timeout=20)
         
         if r.status_code == 200:
             try:
