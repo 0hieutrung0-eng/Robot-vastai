@@ -36,7 +36,6 @@ MAX_INSTANCES = 1
 GITHUB_DOWNLOAD_PATH = "/0hieutrung0-eng/Robot-vastai.git"
 BASE_URL = "https://console.vast.ai/api/v1"
 
-# Giả lập đầy đủ Headers của Trình duyệt để Server chấp nhận request công khai
 HEADERS = {
     "accept": "application/json, text/plain, */*",
     "accept-language": "vi,en-US;q=0.9,en;q=0.8",
@@ -56,7 +55,7 @@ def log_api_error(action_name, response):
     print(f"  -> Nội dung phản hồi: {response.text}", flush=True)
     print("-" * 60, flush=True)
 
-print_and_log("[START] Robot Vast.ai v1 - Bản Giả Lập Gói Tin Raw Browser")
+print_and_log("[START] Robot Vast.ai v1 - Sửa Logic Lọc Client")
 
 if not VAST_API_KEY or not AGENT_TOKEN:
     print_and_log("[❌] LỖI CẤU HÌNH: Thiếu VAST_API_KEY hoặc AGENT_TOKEN!")
@@ -70,7 +69,6 @@ if not VAST_API_KEY or not AGENT_TOKEN:
 def get_instances():
     try:
         print_and_log("[📡] Đang kiểm tra danh sách máy ĐÃ THUÊ trên tài khoản...")
-        # Lấy danh sách máy sở hữu: Sử dụng đúng định dạng params dạng chuỗi thuần
         url = f"{BASE_URL}/instances/?owner=me&api_key={VAST_API_KEY}"
         r = requests.get(url, headers=HEADERS, timeout=20)
 
@@ -82,11 +80,6 @@ def get_instances():
             print_and_log(f"[📊] Số máy đang có trong tài khoản: {len(instances_list)} máy.")
             return instances_list
         else:
-            # Nếu gặp lỗi định tuyến giả lập fallback sang cấu trúc cơ bản
-            r = requests.get(f"{BASE_URL}/instances/", headers=HEADERS, params={"owner": "me", "api_key": VAST_API_KEY}, timeout=20)
-            if r.status_code == 200:
-                data = r.json()
-                return data.get("instances", []) if isinstance(data, dict) else data
             log_api_error("LẤY DANH SÁCH MÁY ĐÃ THUÊ", r)
             return []
     except Exception as e:
@@ -116,7 +109,7 @@ sleep infinity"""
 
 
 # ==============================================================================
-# PHẦN 3: VÒNG LẶP SĂN MÁY BẰNG URL HARDCODED QUY QUYỀN RENTER
+# PHẦN 3: VÒNG LẶP SĂN MÁY TỐI ƯU HÓA BỘ LỌC
 # ==============================================================================
 while True:
     instances = get_instances()
@@ -151,11 +144,10 @@ while True:
             time.sleep(60)
         continue
 
-    print_and_log(f"[🔍] Đang gửi gói tin giả lập quét thị trường tìm kiếm RTX 3090 công khai...")
+    print_and_log(f"[🔍] Đang lấy danh sách thị trường công khai...")
     
     try:
-        # CHÌA KHÓA VÀNG: Viết thô toàn bộ chuỗi URL Encoding gốc mà giao diện điều khiển Vast Web dùng để lọc dữ liệu.
-        # Bypass hoàn toàn các hàm chuyển đổi Json tự động của python để tránh lỗi định dạng.
+        # Chuỗi gói tin mô phỏng URL trích xuất thô
         raw_market_url = (
             f"{BASE_URL}/instances/?"
             "q=%7B%22verified%22%3A%7B%22eq%22%3Atrue%7D%2C%22external%22%3A%7B%22eq%22%3Afalse%7D%2C"
@@ -169,34 +161,42 @@ while True:
         if r.status_code == 200:
             res_data = r.json()
             
-            # Khai thác mảng danh sách máy trả về
-            offers = res_data.get("offers", res_data.get("instances", res_data.get("results", [])))
-            if not isinstance(offers, list) and isinstance(res_data, list):
+            # Đọc mảng từ mọi trường có khả năng trả về
+            offers = []
+            if isinstance(res_data, dict):
+                offers = res_data.get("offers", res_data.get("instances", res_data.get("results", [])))
+            elif isinstance(res_data, list):
                 offers = res_data
                 
             if not offers:
-                print_and_log("[⚠️] Thị trường trả về rỗng. Đang đợi máy trống, quét lại sau 30 giây...")
+                print_and_log("[⚠️] Phản hồi trống. Đang đợi máy lên sàn, quét lại sau 30 giây...")
                 time.sleep(30)
                 continue
                 
-            # Duyệt mảng và lọc theo giá tối đa MAX_PRICE ngay tại Client
+            # SÀNG LỌC MỞ RỘNG: Chấp nhận tất cả các máy xuất hiện trong danh sách trả về thỏa mãn cấu hình
             valid_offers = []
             for o in offers:
                 if not isinstance(o, dict):
                     continue
-                o_id = o.get("id")
+                
+                # Trích xuất ID gói chào thuê công khai
+                o_id = o.get("id", o.get("machine_id"))
                 if o_id is None:
                     continue
-                price = float(o.get("dph_total", o.get("price", 999)))
                 
-                if price <= MAX_PRICE:
+                # Đọc giá tiền thuê
+                price = float(o.get("dph_total", o.get("price", 999)))
+                gpu_name_str = str(o.get("gpu_name", ""))
+                
+                # Chỉ lọc dựa trên tên GPU và giá trần, bỏ qua các flag logic phụ để không bị sót máy rẻ
+                if "3090" in gpu_name_str and price <= MAX_PRICE:
                     valid_offers.append({
                         "id": o_id,
-                        "gpu_name": o.get("gpu_name", "GeForce RTX 3090"),
+                        "gpu_name": gpu_name_str,
                         "price": price
                     })
             
-            print_and_log(f"[📊] Kết quả lọc: Tìm thấy {len(valid_offers)} máy RTX 3090 có giá <= {MAX_PRICE}$")
+            print_and_log(f"[📊] Đã đồng bộ thành công! Tìm thấy {len(valid_offers)} máy RTX 3090 phù hợp (Giá <= {MAX_PRICE}$)")
             
             if not valid_offers:
                 time.sleep(30)
@@ -206,7 +206,7 @@ while True:
             valid_offers.sort(key=lambda x: x["price"])
             best_machine = valid_offers[0]
             
-            print_and_log(f"[🎯] ĐÃ CHỌN ĐƯỢC MÁY: ID {best_machine['id']} - Giá {best_machine['price']}$/giờ. Tiến hành thuê...")
+            print_and_log(f"[🎯] CHỌN ĐƯỢC MÁY RẺ NHẤT: ID {best_machine['id']} - Giá {best_machine['price']}$/giờ. Tiến hành thuê...")
             
             rent_payload = {
                 "image": "nvidia/cuda:12.1.1-runtime-ubuntu22.04",
@@ -225,13 +225,13 @@ while True:
             )
             
             if rent_resp.status_code in (200, 201):
-                print_and_log(f"[🎉] THUÊ MÁY THÀNH CÔNG! Chờ máy thiết lập cài đặt trong 15 phút...")
+                print_and_log(f"[🎉] THUÊ MÁY THÀNH CÔNG! Chờ máy khởi động...")
                 time.sleep(900)
             else:
                 log_api_error("LỆNH THUÊ MÁY (POST /asks/)", rent_resp)
                 time.sleep(20)
         else:
-            log_api_error("QUÉT THỊ TRƯỜNG GIẢ LẬP RAW (GET /instances/)", r)
+            log_api_error("QUÉT THỊ TRƯỜNG GIẢ LẬP (GET /instances/)", r)
             time.sleep(30)
             
     except Exception as e:
