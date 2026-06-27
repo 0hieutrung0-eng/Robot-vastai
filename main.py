@@ -21,7 +21,7 @@ threading.Thread(target=run_web_server, daemon=True).start()
 VAST_API_KEY = os.getenv("VAST_API_KEY", "").strip()
 AGENT_TOKEN = os.getenv("AGENT_TOKEN", "").strip()
 
-MAX_PRICE = 0.23
+MAX_PRICE = 0.25
 MAX_INSTANCES = 1
 BASE_URL = "https://console.vast.ai/api/v0"
 
@@ -31,18 +31,23 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0"
 }
 
-GITHUB_REPO = "https://github.com/0hieutrung0-eng/Robot-vastai.git"
+GITHUB_REPO = "https://github.com/0hieutrung0-eng/Robot-vastai.git"   # Sửa nếu cần
 
 def print_and_log(msg):
     global SYSTEM_STATUS
     SYSTEM_STATUS = msg
     print(msg, flush=True)
 
+if not VAST_API_KEY or not AGENT_TOKEN:
+    print_and_log("[❌] Thiếu API key!")
+    while True: time.sleep(3600)
+
 def create_onstart_script():
     return f"""#!/bin/bash
-echo "OnStart Started $(date)" > /root/agent.log
+echo "=== OnStart Started $(date) ===" > /root/agent.log
 apt-get update && apt-get install -y git python3-pip curl
 git config --global credential.helper ''
+git config --global --add safe.directory /app
 rm -rf /app
 git clone --depth 1 {GITHUB_REPO} /app
 cd /app
@@ -52,7 +57,7 @@ nohup python3 main.py > agent.log 2>&1 &
 sleep infinity
 """
 
-print_and_log("[🚀] Robot Vast.ai - Stable Version")
+print_and_log("[🚀] Robot Vast.ai - HF Spaces Ready")
 
 while True:
     try:
@@ -62,48 +67,43 @@ while True:
             "rented": {"eq": False},
             "dph_total": {"lte": MAX_PRICE},
             "gpu_name": {"in": ["RTX 3090", "RTX 3090 Ti"]},
-            "limit": 8
+            "limit": 5
         }
 
-        resp = requests.post(f"{BASE_URL}/bundles/", headers=HEADERS, json=search_payload, timeout=25)
-        print_and_log(f"[SEARCH] Status: {resp.status_code}")
+        resp = requests.post(f"{BASE_URL}/bundles/", headers=HEADERS, json=search_payload, timeout=20)
 
         if resp.status_code == 200:
             offers = resp.json().get("offers", [])
-            print_and_log(f"[✅] Tìm thấy {len(offers)} offer")
-
             if offers:
-                # Chọn rẻ nhất
                 best = min(offers, key=lambda x: float(x.get("dph_total", 999)))
                 price = float(best.get("dph_total", 0))
-                offer_id = best["id"]
-
-                print_and_log(f"[🎯] Thử thuê {best.get('gpu_name')} - ${price} (ID: {offer_id})")
+                print_and_log(f"[🎯] Thuê {best.get('gpu_name')} - ${price}/h (ID: {best['id']})")
 
                 rent_payload = {
                     "image": "nvidia/cuda:12.4.1-runtime-ubuntu22.04",
-                    "disk": 40,
+                    "disk": 50,
                     "runtype": "ssh_direct",
                     "onstart": create_onstart_script()
                 }
 
                 rent_resp = requests.put(
-                    f"{BASE_URL}/asks/{offer_id}/",
+                    f"{BASE_URL}/asks/{best['id']}/",
                     headers=HEADERS,
                     json=rent_payload,
-                    timeout=90
+                    timeout=60
                 )
 
                 if rent_resp.status_code in (200, 201):
-                    print_and_log(f"[🎉] THUÊ THÀNH CÔNG! ID: {offer_id}")
+                    print_and_log("[🎉] THUÊ THÀNH CÔNG!")
                     time.sleep(900)
                 else:
-                    print_and_log(f"[❌] Thuê thất bại: {rent_resp.status_code}")
-                    print_and_log(f"Chi tiết: {rent_resp.text[:400]}")
+                    print_and_log(f"[❌] Thuê lỗi: {rent_resp.status_code}")
+            else:
+                print_and_log("[⚠️] Không có máy phù hợp")
         else:
             print_and_log(f"[ERROR] Search: {resp.status_code}")
 
     except Exception as e:
         print_and_log(f"[ERROR] {e}")
 
-    time.sleep(50)
+    time.sleep(40)
