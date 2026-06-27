@@ -3,15 +3,11 @@ import requests
 import time
 import json
 import threading
-import urllib.parse
 from fastapi import FastAPI
 import uvicorn
 
-# ==============================================================================
-# PHẦN 1: KHỞI TẠO MÁY CHỦ WEB BẮT BUỘC ĐỂ GIỮ HUGGING FACE SPACES LUÔN "RUNNING"
-# ==============================================================================
 app = FastAPI()
-SYSTEM_STATUS = "Robot đang chạy chế độ Brute-force chẩn đoán..."
+SYSTEM_STATUS = "Robot vừa khởi động..."
 
 @app.get("/")
 def read_root():
@@ -26,14 +22,19 @@ def run_web_server():
 
 threading.Thread(target=run_web_server, daemon=True).start()
 
-
-# ====================== CẤU HÌNH HỆ THỐNG VÀ KEY XÁC THỰC ======================
+# ========================== CONFIG ==========================
 VAST_API_KEY = os.getenv("VAST_API_KEY", "").strip()
-BASE_URL = "https://console.vast.ai/api/v1/instances/"
+AGENT_TOKEN = os.getenv("AGENT_TOKEN", "").strip()
 
+MAX_PRICE = 0.25      # $/giờ
+MAX_INSTANCES = 1
+GITHUB_REPO = "/0hieutrung0-eng/Robot-vastai.git"
+
+BASE_URL = "https://console.vast.ai/api/v1"
 HEADERS = {
     "Accept": "application/json",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    "Content-Type": "application/json",
+    "User-Agent": "Mozilla/5.0"
 }
 
 def print_and_log(msg):
@@ -41,80 +42,154 @@ def print_and_log(msg):
     SYSTEM_STATUS = msg
     print(msg, flush=True)
 
-print_and_log("[START] Robot Vast.ai v1 - Quét Sạch Mọi Định Dạng Tham Số q")
-
-if not VAST_API_KEY:
-    print_and_log("[❌] LỖI CẤU HÌNH: Thiếu VAST_API_KEY!")
+if not VAST_API_KEY or not AGENT_TOKEN:
+    print_and_log("[❌] Thiếu VAST_API_KEY hoặc AGENT_TOKEN!")
     while True:
         time.sleep(3600)
 
+# ========================== ONSTART SCRIPT ==========================
+def create_onstart_script():
+    AUTH_URL = f"https://{AGENT_TOKEN}@github.com{GITHUB_REPO}"
+    return f"""#!/bin/bash
+echo "=== Agent OnStart Started - $(date) ===" > /root/agent.log
+set -e
 
-# ==============================================================================
-# PHẦN 2: DANH SÁCH MỌI KIỂU ĐỊNH DẠNG Q CÓ THỂ XẢY RA TRÊN ĐỜI
-# ==============================================================================
-# Cấu trúc 1: Chuỗi JSON chuẩn hóa URL (Toán tử lồng)
-q1 = json.dumps({"verified": {"eq": True}, "external": {"eq": False}, "rentable": {"eq": True}, "rented": {"eq": False}}, separators=(',', ':'))
+apt-get update && apt-get install -y git python3-pip curl htop
 
-# Cấu trúc 2: Chuỗi JSON làm phẳng (Không toán tử)
-q2 = json.dumps({"verified": True, "external": False, "rentable": True, "rented": False}, separators=(',', ':'))
+git config --global credential.helper ''
+git config --global --add safe.directory /app
 
-# Cấu trúc 3: Truyền thẳng tên GPU vào query search text
-q3 = json.dumps({"gpu_name": {"eq": "GeForce RTX 3090"}}, separators=(',', ':'))
+rm -rf /app
+if git clone --depth 1 {AUTH_URL} /app; then
+    echo "→ Clone thành công" >> /root/agent.log
+else
+    echo "→ Clone thất bại" >> /root/agent.log
+    exit 1
+fi
 
-# Cấu trúc 4: Định dạng mảng hoặc chuỗi text tìm kiếm tự do
-q4 = "GeForce RTX 3090"
+cd /app
+if [ -f "requirements.txt" ]; then
+    pip install -r requirements.txt --no-cache-dir -q
+fi
 
-# Cấu trúc 5: Thử bọc thêm wrapper Object bên ngoài
-q5 = json.dumps({"q": {"verified": True, "rentable": True, "rented": False}}, separators=(',', ':'))
+export TOKEN="{AGENT_TOKEN}"
+nohup python3 main.py > agent.log 2>&1 &
+echo "→ Main agent started" >> /root/agent.log
+sleep infinity
+"""
 
-# Cấu trúc 6: Chuỗi filter rút gọn tối đa
-q6 = json.dumps({"rentable": True, "rented": False}, separators=(',', ':'))
+# ========================== API HELPERS ==========================
+def get_my_instances():
+    try:
+        r = requests.get(
+            f"{BASE_URL}/instances/?owner=me",
+            headers=HEADERS,
+            params={"api_key": VAST_API_KEY},
+            timeout=20
+        )
+        if r.status_code == 200:
+            data = r.json()
+            return data.get("instances", []) if isinstance(data, dict) else []
+        return []
+    except Exception as e:
+        print_and_log(f"[ERROR] get_my_instances: {e}")
+        return []
 
-tests = [
-    {"desc": "Kiểu 1: GET Object toán tử lồng (Mã hóa URL)", "params": {"q": q1, "api_key": VAST_API_KEY}},
-    {"desc": "Kiểu 2: GET Object phẳng (Mã hóa URL)", "params": {"q": q2, "api_key": VAST_API_KEY}},
-    {"desc": "Kiểu 3: GET Chỉ lọc chính xác tên GPU 3090", "params": {"q": q3, "api_key": VAST_API_KEY}},
-    {"desc": "Kiểu 4: GET Truyền text thuần (Search query)", "params": {"q": q4, "api_key": VAST_API_KEY}},
-    {"desc": "Kiểu 5: GET Bọc wrapper q bên trong q", "params": {"q": q5, "api_key": VAST_API_KEY}},
-    {"desc": "Kiểu 6: GET Thả lỏng bộ lọc chỉ check rentable/rented", "params": {"q": q6, "api_key": VAST_API_KEY}},
-    {"desc": "Kiểu 7: GET Truyền dạng mảng tham số phẳng trực tiếp vào URL", "params": {"verified": "true", "external": "false", "rentable": "true", "rented": "false", "api_key": VAST_API_KEY}}
-]
+def search_offers():
+    query = {
+        "verified": {"eq": True},
+        "rentable": {"eq": True},
+        "rented": {"eq": False},
+        "gpu_name": {"in": ["RTX 3090", "RTX 3090 Ti"]},   # Có thể thêm GPU khác
+        "dph_total": {"lte": MAX_PRICE},
+        "type": {"eq": "on-demand"}   # hoặc "interruptible" nếu muốn rẻ hơn
+    }
 
+    try:
+        r = requests.post(
+            f"{BASE_URL}/offers/search/",
+            headers=HEADERS,
+            params={"api_key": VAST_API_KEY},
+            json=query,
+            timeout=25
+        )
 
-# ==============================================================================
-# PHẦN 3: VÒNG LẶP THỬ NGHIỆM LIÊN TỤC
-# ==============================================================================
+        if r.status_code == 200:
+            data = r.json()
+            offers = data.get("offers", [])
+            print_and_log(f"[📊] Tìm thấy {len(offers)} offer phù hợp")
+            return offers
+        else:
+            print_and_log(f"[❌] Search failed: {r.status_code}")
+            print(r.text[:500])
+            return []
+    except Exception as e:
+        print_and_log(f"[ERROR] search_offers: {e}")
+        return []
+
+# ========================== MAIN LOOP ==========================
+print_and_log("[START] Robot Vast.ai v2 - Tối ưu API 2026")
+
 while True:
-    print_and_log("\n" + "="*70)
-    print_and_log("[🔍] KÍCH HOẠT CHU KỲ KIỂM TRA TOÀN DIỆN CÁC KIỂU THAM SỐ...")
-    print_and_log("="*70)
-    
-    for idx, case in enumerate(tests, 1):
-        print_and_log(f"\n👉 [TEST {idx}] Thử nghiệm: {case['desc']}")
-        try:
-            # Gửi request với các kiểu build params khác nhau
-            r = requests.get(BASE_URL, headers=HEADERS, params=case["params"], timeout=15)
-            
-            print_and_log(f"  -> Trạng thái HTTP: {r.status_code}")
-            
-            if r.status_code == 200:
-                res_json = r.json()
-                total = res_json.get("total_instances", res_json.get("instances_found", "N/A"))
-                instances_len = len(res_json.get("instances", [])) if isinstance(res_json.get("instances"), list) else "N/A"
-                
-                print_and_log(f"  -> 🎉 THÀNH CÔNG KHỚP ENDPOINT!")
-                print_and_log(f"  -> Kết quả dữ liệu: total_instances = {total} | Số lượng máy trong mảng = {instances_len}")
-                
-                # Nếu tìm thấy máy thật, in thử 300 ký tự đầu để xem cấu trúc
-                if instances_len != "N/A" and instances_len > 0:
-                    print_and_log(f"  -> 🎯 ĐÃ TÌM THẤY ĐÚNG ĐỊNH DẠNG! Mẫu dữ liệu thô:")
-                    print(f"{r.text[:400]}...", flush=True)
-            else:
-                print_and_log(f"  -> ❌ Thất bại. Nội dung phản hồi: {r.text[:150]}")
-                
-        except Exception as e:
-            print_and_log(f"  -> Lỗi kết nối vật lý: {e}")
-            
-    print_and_log("\n" + "-"*70)
-    print_and_log("[💡] Đã hoàn thành 1 chu kỳ thử nghiệm cuốn chiếu. Đợi 60 giây...")
-    time.sleep(60)
+    instances = get_my_instances()
+    active_count = sum(1 for inst in instances 
+                      if inst.get("status") in ["running", "loading", "creating", "starting"])
+
+    print_and_log(f"[CHECK] Đang chạy: {active_count}/{MAX_INSTANCES} | Tổng: {len(instances)}")
+
+    # Cleanup máy lỗi / dư
+    for inst in instances:
+        status = str(inst.get("status", "")).lower()
+        inst_id = inst.get("id")
+        if status in ["error", "dead", "stopped", "failed"]:
+            print_and_log(f"🗑️ Xóa máy lỗi: {inst.get('gpu_name')} (ID: {inst_id})")
+            requests.delete(
+                f"{BASE_URL}/instances/{inst_id}/",
+                headers=HEADERS,
+                params={"api_key": VAST_API_KEY}
+            )
+            time.sleep(8)
+
+    if active_count >= MAX_INSTANCES:
+        print_and_log(f"[✅] Đã đủ {active_count} máy. Nghỉ 8 phút...")
+        time.sleep(480)
+        continue
+
+    # Tìm máy mới
+    offers = search_offers()
+    if not offers:
+        print_and_log("[⏳] Không tìm thấy máy phù hợp, chờ 30s...")
+        time.sleep(30)
+        continue
+
+    # Chọn máy rẻ nhất
+    offers.sort(key=lambda x: float(x.get("dph_total", 999)))
+    best = offers[0]
+    price = float(best.get("dph_total", 0))
+
+    print_and_log(f"[🎯] Thuê máy tốt nhất: {best.get('gpu_name')} - ${price}/h (Offer ID: {best['id']})")
+
+    rent_payload = {
+        "image": "nvidia/cuda:12.4.1-runtime-ubuntu22.04",   # Cập nhật version mới hơn
+        "disk": 50.0,
+        "runtype": "ssh_direct",
+        "onstart": create_onstart_script(),
+        "ssh": True,
+        "direct": True
+    }
+
+    rent_resp = requests.post(
+        f"{BASE_URL}/asks/{best['id']}/",
+        headers=HEADERS,
+        params={"api_key": VAST_API_KEY},
+        json=rent_payload,
+        timeout=60
+    )
+
+    if rent_resp.status_code in (200, 201):
+        print_and_log(f"[🎉] THUÊ THÀNH CÔNG! Chờ 15 phút để máy boot...")
+        time.sleep(900)
+    else:
+        print_and_log(f"[❌] Thuê thất bại: {rent_resp.status_code}")
+        print(rent_resp.text[:400])
+        time.sleep(30)
