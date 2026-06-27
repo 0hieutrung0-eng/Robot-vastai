@@ -12,13 +12,13 @@ MAX_INSTANCES = 1
 # ====================== TÁCH BIẾN ĐƯỜNG DẪN GITHUB ======================
 GITHUB_HOST = "https://github.com"
 GITHUB_PATH = "/0hieutrung0-eng/Robot-vastai/tree/main"
-# Ghép lại thành đường dẫn hoàn chỉnh
+# Ghép lại thành đường dẫn hoàn chỉnh của bạn
 GITHUB_REPO = GITHUB_HOST + GITHUB_PATH
 
 # ====================== TÁCH BIẾN BASE URL VAST.AI ======================
-VAST_HOST = "https://console.vast.ai"
+VAST_HOST = "https://vast.ai"
 VAST_PATH = "/api/v1"
-# Ghép lại thành đường dẫn hoàn chỉnh
+# Ghép lại thành đường dẫn hoàn chỉnh của bạn
 BASE_URL = VAST_HOST + VAST_PATH
 
 HEADERS = {
@@ -64,13 +64,14 @@ while True:
     if active < MAX_INSTANCES:
         print("[🔍] Tìm máy RTX 3090...")
         
+        # ĐÃ SỬA: Loại bỏ ép buộc Verified để thấy máy rẻ, giới hạn num_gpus để khớp giá lọc
         payload = {
-            "verified": {"eq": True},
             "external": {"eq": False},
             "rentable": {"eq": True},
             "rented": {"eq": False},
             "dph_total": {"lte": MAX_PRICE},
-            "gpu_name": {"contains": "3090"}
+            "gpu_name": {"contains": "3090"},
+            "num_gpus": {"eq": 1}
         }
         
         try:
@@ -81,7 +82,7 @@ while True:
                 # Sắp xếp các ưu đãi theo giá từ thấp đến cao
                 offers.sort(key=lambda x: x.get("dph_total", 999))
                 
-                # Rút phần tử đầu tiên ra để xử lý thông qua hàm .pop(0) nhằm tránh lỗi hiển thị hệ thống
+                # Rút phần tử đầu tiên (giá rẻ nhất) ra bằng hàm .pop(0) để an toàn hiển thị
                 best = offers.pop(0)
                 print(f"[🎯] Thuê {best.get('gpu_name')} - Giá: {best.get('dph_total')}$")
                 
