@@ -45,10 +45,9 @@ VAST_HOST = "https://vast.ai"
 VAST_PATH = "/api/v1"
 BASE_URL = VAST_HOST + VAST_PATH
 
-# Header chuẩn xác theo yêu cầu hệ thống xác thực mới của Vast.ai
+# Header chuẩn xác theo yêu cầu hệ thống xác thực của Vast.ai
 HEADERS = {
     "Accept": "application/json",
-    "Authorization": f"Bearer {VAST_API_KEY}",
     "Content-Type": "application/json"
 }
 
@@ -57,7 +56,7 @@ def print_and_log(msg):
     SYSTEM_STATUS = msg
     print(msg, flush=True)
 
-print_and_log("[START] Robot Vast.ai Fixed v1 - Khởi động giữ duy nhất 1 GPU")
+print_and_log("[START] Robot Vast.ai Final v1 - Khởi động giữ duy nhất 1 GPU")
 
 if not VAST_API_KEY or not AGENT_TOKEN:
     print_and_log("[❌] LỖI CẤU HÌNH: Vui lòng điền VAST_API_KEY và AGENT_TOKEN vào Environment Variables!")
@@ -73,8 +72,13 @@ print_and_log(f"[INFO] Kho mã nguồn mục tiêu: {GITHUB_REPO}")
 def get_instances():
     try:
         print_and_log("[📡] Đang gửi yêu cầu lấy danh sách máy từ Vast.ai...")
-        # Bỏ dấu gạch chéo cuối URL để tránh 404 tùy cấu hình server
-        r = requests.get(f"{BASE_URL}/instances", headers=HEADERS, timeout=20)
+        # Đưa api_key trực tiếp vào params kèm dấu gạch chéo cuối url để tránh 404/Redirect
+        r = requests.get(
+            f"{BASE_URL}/instances/", 
+            headers=HEADERS, 
+            params={"api_key": VAST_API_KEY}, 
+            timeout=20
+        )
         
         if r.status_code == 200:
             try:
@@ -131,13 +135,13 @@ while True:
         
         if status in ["error", "dead", "stopped", "failed"]:
             print_and_log(f" 🗑️ Phát hiện máy lỗi -> Tiến hành xóa: {gpu_name} (ID: {inst_id})")
-            requests.delete(f"{BASE_URL}/instances/{inst_id}", headers=HEADERS, timeout=15)
+            requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS, params={"api_key": VAST_API_KEY}, timeout=15)
             time.sleep(8)
         elif status in ACTIVE_STATUS:
             valid_kept += 1
             if valid_kept > MAX_INSTANCES:
                 print_and_log(f" 🗑️ Phát hiện máy dư thừa -> Tiến hành xóa máy thừa: {gpu_name} (ID: {inst_id})")
-                requests.delete(f"{BASE_URL}/instances/{inst_id}", headers=HEADERS, timeout=15)
+                requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS, params={"api_key": VAST_API_KEY}, timeout=15)
                 time.sleep(8)
                 
     if valid_kept >= MAX_INSTANCES:
@@ -149,7 +153,7 @@ while True:
 
     print_and_log(f"[🔍] Số máy hoạt động ({valid_kept}) thấp hơn chỉ tiêu ({MAX_INSTANCES}). Tiến hành quét tìm RTX 3090...")
     
-    # Định dạng bộ lọc chuẩn v1 cho endpoint bundles
+    # Bộ lọc tìm kiếm máy
     query_filter = {
         "rentable": {"eq": True},
         "rented": {"eq": False},
@@ -158,13 +162,14 @@ while True:
     }
     
     search_params = {
+        "api_key": VAST_API_KEY,
         "q": json.dumps(query_filter)
     }
     
     try:
         print_and_log("[📡] Đang gửi bộ lọc tìm kiếm máy giá rẻ lên thị trường Vast.ai...")
-        # Đảm bảo đường dẫn endpoint chính xác cho v1 không bị redirect trả về HTML
-        r = requests.get(f"{BASE_URL}/bundles", headers=HEADERS, params=search_params, timeout=20)
+        # Endpoint bundles/ có dấu gạch chéo cuối cùng
+        r = requests.get(f"{BASE_URL}/bundles/", headers=HEADERS, params=search_params, timeout=20)
         
         if r.status_code == 200:
             try:
@@ -196,10 +201,11 @@ while True:
                 "onstart": create_onstart_script()
             }
             
-            # Đảm bảo endpoint tạo máy từ bundle id không lỗi 404 trên v1
+            # Thực hiện đặt thuê với phương thức POST, có trailing slash và kèm api_key params
             rent_resp = requests.post(
-                f"{BASE_URL}/asks/{offer_id}", 
+                f"{BASE_URL}/asks/{offer_id}/", 
                 headers=HEADERS, 
+                params={"api_key": VAST_API_KEY},
                 json=rent_payload, 
                 timeout=90
             )
