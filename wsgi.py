@@ -1,26 +1,70 @@
 import os
+import requests
+import time
 import threading
-import subprocess
-from http.server import SimpleHTTPRequestHandler, HTTPServer
+from fastapi import FastAPI
+import uvicorn
 
-# 1. Ép robot main.py chạy ngầm trong một luồng (thread) riêng biệt
-def run_bot():
-    # Thêm PYTHONUNBUFFERED=1 để bắt Python in log ra Render ngay lập tức
-    os.environ["PYTHONUNBUFFERED"] = "1"
-    subprocess.run(["python", "main.py"])
+app = FastAPI()
+SYSTEM_STATUS = "Robot đang chạy..."
 
-threading.Thread(target=run_bot, daemon=True).start()
+@app.get("/")
+def read_root():
+    return {"status": "active", "message": SYSTEM_STATUS, "time": time.strftime("%Y-%m-%d %H:%M:%S")}
 
-# 2. Tạo một Web Server "giả" ở cổng mà Render yêu cầu để giữ cho ứng dụng luôn Live
-class HealthCheckHandler(SimpleHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-type", "text/plain")
-        self.end_headers()
-        self.wfile.write(b"Robot is running smoothly!")
+def run_web_server():
+    uvicorn.run(app, host="0.0.0.0", port=7860, log_level="warning")
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-    print(f"[SYSTEM] Web Server ao dang mo tai port {port} de duy tri goi Free...")
-    server.serve_forever()
+threading.Thread(target=run_web_server, daemon=True).start()
+
+VAST_API_KEY = os.getenv("VAST_API_KEY", "").strip()
+AGENT_TOKEN = os.getenv("AGENT_TOKEN", "").strip()
+
+MAX_PRICE = 0.22
+BASE_URL = "https://console.vast.ai/api/v0"
+
+HEADERS = {
+    "Authorization": f"Bearer {VAST_API_KEY}",
+    "Content-Type": "application/json",
+    "User-Agent": "Mozilla/5.0"
+}
+
+GITHUB_REPO = "https://github.com/0hieutrung0-eng/Robot-vastai.git"
+
+def print_and_log(msg):
+    global SYSTEM_STATUS
+    SYSTEM_STATUS = msg
+    print(msg, flush=True)
+
+print_and_log("[🚀] Robot Vast.ai - New API Key")
+
+while True:
+    try:
+        search_payload = {
+            "rentable": {"eq": True},
+            "rented": {"eq": False},
+            "dph_total": {"lte": MAX_PRICE},
+            "gpu_name": {"in": ["RTX 3090", "RTX 3090 Ti"]},
+            "limit": 6
+        }
+
+        resp = requests.post(f"{BASE_URL}/bundles/", headers=HEADERS, json=search_payload, timeout=25)
+        print_and_log(f"[SEARCH] Status: {resp.status_code}")
+
+        if resp.status_code == 200:
+            offers = resp.json().get("offers", [])
+            if offers:
+                best = min(offers, key=lambda x: float(x.get("dph_total", 999)))
+                print_and_log(f"[🎯] Tìm thấy {best.get('gpu_name')} - ${best.get('dph_total')}")
+                # Thêm phần thuê ở đây nếu muốn
+            else:
+                print_and_log("[⚠️] Không có máy phù hợp")
+        elif resp.status_code == 403:
+            print_and_log("[⏳] 403 - Nghỉ 10 phút...")
+            time.sleep(600)
+        else:
+            print_and_log(f"[ERROR] {resp.status_code}")
+    except Exception as e:
+        print_and_log(f"[ERROR] {e}")
+
+    time.sleep(80)
