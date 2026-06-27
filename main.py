@@ -20,7 +20,7 @@ GITHUB_DOWNLOAD_PATH = "/0hieutrung0-eng/Robot-vastai.git"
 GITHUB_DOWNLOAD_URL = GITHUB_DOWNLOAD_HOST + GITHUB_DOWNLOAD_PATH
 
 # ====================== TÁCH BIẾN BASE URL VAST.AI ======================
-VAST_HOST = "https://vast.ai"
+VAST_HOST = "https://console.vast.ai"
 VAST_PATH = "/api/v1"
 BASE_URL = VAST_HOST + VAST_PATH
 
@@ -40,7 +40,7 @@ def get_instances():
         return []
 
 def create_onstart_script():
-    # Sử dụng biến GITHUB_DOWNLOAD_URL đã ghép từ 2 biến tách rời để kéo code không bị gãy
+    # Căn lề sát lề trái tuyệt đối để loại bỏ khoảng trắng thừa gây lỗi Bash trên máy ảo
     return f"""#!/bin/bash
 apt-get update && apt-get install -y git python3-pip
 rm -rf /app
@@ -49,8 +49,7 @@ cd /app
 [ -f requirements.txt ] && pip install -r requirements.txt --quiet
 export TOKEN="{AGENT_TOKEN}"
 nohup python3 main.py > agent.log 2>&1 &
-tail -f /dev/null
-"""
+tail -f /dev/null"""
 
 while True:
     instances = get_instances()
@@ -68,23 +67,26 @@ while True:
     if active < MAX_INSTANCES:
         print("[🔍] Tìm máy RTX 3090...")
         
-        # BỘ LỌC ĐÃ CHUẨN HÓA: Bỏ hoàn toàn trường verified để nhận diện máy Unverified rẻ nhất
+        # CHUẨN HÓA BỘ LỌC: Sử dụng từ khóa chính xác "RTX 3090", bỏ hoàn toàn trường verified
         payload = {
             "external": {"eq": False},
             "rentable": {"eq": True},
             "rented": {"eq": False},
             "dph_total": {"lte": MAX_PRICE},
-            "gpu_name": {"contains": "3090"},
+            "gpu_name": {"contains": "RTX 3090"},
             "num_gpus": {"eq": 1}
         }
         
         try:
             r = requests.get(f"{BASE_URL}/bundles", headers=HEADERS, params={"q": json.dumps(payload)}, timeout=20)
-            offers = r.json().get("offers", []) if r.status_code == 200 else []
+            
+            # Khắc phục lỗi fallback dự phòng cấu trúc dữ liệu trả về của Vast.ai
+            res_data = r.json()
+            offers = res_data.get("offers", res_data.get("results", []))
             
             if offers:
+                # Sắp xếp các ưu đãi theo giá từ thấp đến cao
                 offers.sort(key=lambda x: x.get("dph_total", 999))
-                # Rút phần tử đầu tiên (giá rẻ nhất) ra thông qua hàm .pop(0) để an toàn định dạng
                 best = offers.pop(0)
                 print(f"[🎯] Thuê {best.get('gpu_name')} - Giá: {best.get('dph_total')}$")
                 
@@ -106,13 +108,13 @@ while True:
                     print("[🎉] THUÊ THÀNH CÔNG!")
                     time.sleep(900)
                 else:
-                    print(f"[❌] Lỗi thuê máy: {rent_resp.status_code} - {rent_resp.text}")
+                    print(f"[❌] Lỗi đặt thuê từ Vast.ai: {rent_resp.status_code} - {rent_resp.text}")
                     time.sleep(30)
             else:
                 print(f"[⏳] Không có máy giá dưới {MAX_PRICE}$. Thử lại sau 1 phút...")
                 time.sleep(60)
         except Exception as e:
-            print(f"[ERROR] {e}")
+            print(f"[ERROR] Lỗi trong quá trình xử lý: {e}")
             time.sleep(60)
     else:
         time.sleep(120)
