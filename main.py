@@ -55,7 +55,7 @@ def print_and_log(msg):
     SYSTEM_STATUS = msg
     print(msg, flush=True)
 
-print_and_log("[START] Robot Vast.ai API v1 Pure POST - Khởi động")
+print_and_log("[START] Robot Vast.ai API v1 Final Stable - Khởi động")
 
 if not VAST_API_KEY or not AGENT_TOKEN:
     print_and_log("[❌] LỖI CẤU HÌNH: Vui lòng điền VAST_API_KEY và AGENT_TOKEN vào Environment Variables!")
@@ -66,23 +66,35 @@ print_and_log(f"[INFO] Kho mã nguồn mục tiêu: {GITHUB_REPO}")
 
 
 # ==============================================================================
-# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI VIA POST ONLY
+# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI
 # ==============================================================================
 def get_instances():
     try:
-        print_and_log("[📡] Đang gửi yêu cầu lấy danh sách máy bằng POST (API v1)...")
-        # SỬA ĐỔI QUAN TRỌNG: Chuyển sang POST và truyền payload {"owner": "me"} để tránh lỗi predicate mismatch
-        r = requests.post(
+        print_and_log("[📡] Đang gửi yêu cầu lấy danh sách máy từ Vast.ai...")
+        # Sử dụng GET kèm api_key trực tiếp trong params tới endpoint chính xác của tài khoản cá nhân
+        r = requests.get(
             f"{BASE_URL}/instances", 
             headers=HEADERS, 
-            params={"api_key": VAST_API_KEY},
-            json={"owner": "me"}, 
+            params={"api_key": VAST_API_KEY}, 
             timeout=20
         )
         
+        # Nếu GET bị chặn hoặc báo predicate mismatch, hệ thống tự động fallback sang POST chuẩn
+        if r.status_code == 404 or "predicate mismatch" in r.text:
+            r = requests.post(
+                f"{BASE_URL}/instances",
+                headers=HEADERS,
+                params={"api_key": VAST_API_KEY},
+                json={"owner": "me"},
+                timeout=20
+            )
+
         if r.status_code == 200:
             try:
                 instances_list = r.json().get("instances", [])
+                # Trường hợp API trả về cấu trúc bọc ngoài khác
+                if not instances_list and isinstance(r.json(), list):
+                    instances_list = r.json()
                 print_and_log(f"[📊] Tìm thấy tổng cộng: {len(instances_list)} máy trên tài khoản.")
                 return instances_list
             except ValueError:
@@ -124,26 +136,29 @@ sleep infinity"""
 while True:
     instances = get_instances()
     ACTIVE_STATUS = {"running", "loading", "creating", "starting"}
-    running_count = sum(1 for inst in instances if str(inst.get("status", "")).lower() in ACTIVE_STATUS)
+    
+    running_count = 0
+    if instances:
+        running_count = sum(1 for inst in instances if str(inst.get("status", "")).lower() in ACTIVE_STATUS)
     print_and_log(f"[CHECK] Đang hoạt động: {running_count} | Tổng số máy: {len(instances)}")
     
     valid_kept = 0
-    for inst in instances:
-        inst_id = inst.get("id")
-        status = str(inst.get("status", "")).lower()
-        gpu_name = inst.get("gpu_name", "Unknown")
-        
-        if status in ["error", "dead", "stopped", "failed"]:
-            print_and_log(f" 🗑️ Phát hiện máy lỗi -> Tiến hành xóa: {gpu_name} (ID: {inst_id})")
-            # Endpoint delete đôi khi nhận POST hoặc DELETE tùy loại máy, thử delete chuẩn v1 trước
-            requests.delete(f"{BASE_URL}/instances/{inst_id}", headers=HEADERS, params={"api_key": VAST_API_KEY}, timeout=15)
-            time.sleep(8)
-        elif status in ACTIVE_STATUS:
-            valid_kept += 1
-            if valid_kept > MAX_INSTANCES:
-                print_and_log(f" 🗑️ Phát hiện máy dư thừa -> Tiến hành xóa máy thừa: {gpu_name} (ID: {inst_id})")
+    if instances:
+        for inst in instances:
+            inst_id = inst.get("id")
+            status = str(inst.get("status", "")).lower()
+            gpu_name = inst.get("gpu_name", "Unknown")
+            
+            if status in ["error", "dead", "stopped", "failed"]:
+                print_and_log(f" 🗑️ Phát hiện máy lỗi -> Tiến hành xóa: {gpu_name} (ID: {inst_id})")
                 requests.delete(f"{BASE_URL}/instances/{inst_id}", headers=HEADERS, params={"api_key": VAST_API_KEY}, timeout=15)
                 time.sleep(8)
+            elif status in ACTIVE_STATUS:
+                valid_kept += 1
+                if valid_kept > MAX_INSTANCES:
+                    print_and_log(f" 🗑️ Phát hiện máy dư thừa -> Tiến hành xóa máy thừa: {gpu_name} (ID: {inst_id})")
+                    requests.delete(f"{BASE_URL}/instances/{inst_id}", headers=HEADERS, params={"api_key": VAST_API_KEY}, timeout=15)
+                    time.sleep(8)
                 
     if valid_kept >= MAX_INSTANCES:
         print_and_log(f"[✅] Đã có {valid_kept} máy hoạt động ổn định -> Nghỉ giữ luồng 8 phút...")
@@ -154,7 +169,7 @@ while True:
 
     print_and_log(f"[🔍] Số máy hoạt động ({valid_kept}) thấp hơn chỉ tiêu ({MAX_INSTANCES}). Tiến hành quét tìm RTX 3090...")
     
-    # Cấu trúc query filter chuẩn hóa cho tìm kiếm máy công khai (không truyền owner)
+    # Cấu trúc query filter chuẩn xác cho việc tìm kiếm tài nguyên công công thông qua POST /bundles
     query_filter = {
         "verified": {"eq": True},
         "external": {"eq": False},
@@ -164,17 +179,14 @@ while True:
         "dph_total": {"lte": MAX_PRICE}
     }
     
-    search_payload = {
-        "q": query_filter
-    }
-    
     try:
         print_and_log("[📡] Đang gửi bộ lọc tìm kiếm máy giá rẻ lên thị trường Vast.ai...")
+        # Sử dụng endpoint /bundles kết hợp phương thức POST và truyền query thuần json
         r = requests.post(
-            f"{BASE_URL}/instances", 
+            f"{BASE_URL}/bundles", 
             headers=HEADERS, 
             params={"api_key": VAST_API_KEY},
-            json=search_payload, 
+            json={"q": query_filter}, 
             timeout=25
         )
         
@@ -186,7 +198,7 @@ while True:
                 time.sleep(40)
                 continue
                 
-            offers = res_data.get("instances", res_data.get("results", []))
+            offers = res_data.get("instances", res_data.get("results", res_data.get("offers", [])))
             print_and_log(f"[📊] Kết quả tìm kiếm: Tìm thấy {len(offers)} máy thỏa mãn tiêu chuẩn")
             
             if not offers:
