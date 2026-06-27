@@ -55,7 +55,7 @@ def print_and_log(msg):
     SYSTEM_STATUS = msg
     print(msg, flush=True)
 
-print_and_log("[START] Robot Vast.ai Console API v1 Ultimate - Khởi động")
+print_and_log("[START] Robot Vast.ai API v1 Pure POST - Khởi động")
 
 if not VAST_API_KEY or not AGENT_TOKEN:
     print_and_log("[❌] LỖI CẤU HÌNH: Vui lòng điền VAST_API_KEY và AGENT_TOKEN vào Environment Variables!")
@@ -66,15 +66,17 @@ print_and_log(f"[INFO] Kho mã nguồn mục tiêu: {GITHUB_REPO}")
 
 
 # ==============================================================================
-# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI VIA CONSOLE V1
+# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI VIA POST ONLY
 # ==============================================================================
 def get_instances():
     try:
-        print_and_log("[📡] Đang gửi yêu cầu lấy danh sách máy từ Vast.ai Console API...")
-        r = requests.get(
+        print_and_log("[📡] Đang gửi yêu cầu lấy danh sách máy bằng POST (API v1)...")
+        # SỬA ĐỔI QUAN TRỌNG: Chuyển sang POST và truyền payload {"owner": "me"} để tránh lỗi predicate mismatch
+        r = requests.post(
             f"{BASE_URL}/instances", 
             headers=HEADERS, 
-            params={"api_key": VAST_API_KEY}, 
+            params={"api_key": VAST_API_KEY},
+            json={"owner": "me"}, 
             timeout=20
         )
         
@@ -133,6 +135,7 @@ while True:
         
         if status in ["error", "dead", "stopped", "failed"]:
             print_and_log(f" 🗑️ Phát hiện máy lỗi -> Tiến hành xóa: {gpu_name} (ID: {inst_id})")
+            # Endpoint delete đôi khi nhận POST hoặc DELETE tùy loại máy, thử delete chuẩn v1 trước
             requests.delete(f"{BASE_URL}/instances/{inst_id}", headers=HEADERS, params={"api_key": VAST_API_KEY}, timeout=15)
             time.sleep(8)
         elif status in ACTIVE_STATUS:
@@ -151,7 +154,7 @@ while True:
 
     print_and_log(f"[🔍] Số máy hoạt động ({valid_kept}) thấp hơn chỉ tiêu ({MAX_INSTANCES}). Tiến hành quét tìm RTX 3090...")
     
-    # Cập nhật chuẩn cấu trúc query filter mới cho API v1 tìm kiếm máy qua endpoint /instances dạng POST
+    # Cấu trúc query filter chuẩn hóa cho tìm kiếm máy công khai (không truyền owner)
     query_filter = {
         "verified": {"eq": True},
         "external": {"eq": False},
@@ -167,7 +170,6 @@ while True:
     
     try:
         print_and_log("[📡] Đang gửi bộ lọc tìm kiếm máy giá rẻ lên thị trường Vast.ai...")
-        # THAY ĐỔI QUAN TRỌNG: Sử dụng phương thức POST gửi payload JSON tới endpoint /instances chuẩn v1
         r = requests.post(
             f"{BASE_URL}/instances", 
             headers=HEADERS, 
@@ -206,7 +208,6 @@ while True:
                 "onstart": create_onstart_script()
             }
             
-            # Endpoint đặt thuê chuẩn v1 bằng phương thức POST dựa trên ID máy quét được
             rent_resp = requests.post(
                 f"{BASE_URL}/asks/{offer_id}", 
                 headers=HEADERS, 
