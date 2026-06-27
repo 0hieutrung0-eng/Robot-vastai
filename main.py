@@ -5,7 +5,7 @@ import threading
 from fastapi import FastAPI
 import uvicorn
 
-# ====================== FASTAPI (giữ Spaces alive) ======================
+# ====================== FASTAPI ======================
 app = FastAPI()
 SYSTEM_STATUS = "Robot đang khởi động..."
 
@@ -56,18 +56,17 @@ def create_onstart_script():
     return f"""#!/bin/bash
 echo "=== OnStart Started $(date) ===" > /root/agent.log
 set -e
-
 apt-get update && apt-get install -y git python3-pip curl htop
-
 git config --global credential.helper ''
 git config --global --add safe.directory /app
-
 rm -rf /app
-git clone --depth 1 {AUTH_URL} /app && echo "→ Clone OK" >> /root/agent.log || (echo "→ Clone FAIL" && exit 1)
-
+if git clone --depth 1 {AUTH_URL} /app; then
+    echo "→ Clone OK" >> /root/agent.log
+else
+    echo "→ Clone FAIL" >> /root/agent.log && exit 1
+fi
 cd /app
 [ -f requirements.txt ] && pip install -r requirements.txt --no-cache-dir -q
-
 export TOKEN="{AGENT_TOKEN}"
 nohup python3 main.py > agent.log 2>&1 &
 echo "→ Main agent started" >> /root/agent.log
@@ -82,7 +81,11 @@ def get_my_instances():
             headers=get_auth_headers(),
             timeout=20
         )
-        return r.json().get("instances", []) if r.status_code == 200 else []
+        if r.status_code == 200:
+            return r.json().get("instances", [])
+        else:
+            print_and_log(f"[WARN] get_my_instances: {r.status_code}")
+            return []
     except Exception as e:
         print_and_log(f"[ERROR] get_my_instances: {e}")
         return []
@@ -110,8 +113,7 @@ def search_offers():
             print_and_log(f"[📊] Tìm thấy {len(offers)} offer phù hợp")
             return offers
         else:
-            print_and_log(f"[❌] Search failed {r.status_code}")
-            print_and_log(f"Response: {r.text[:500]}")
+            print_and_log(f"[❌] Search failed {r.status_code} - {r.text[:400]}")
             return []
     except Exception as e:
         print_and_log(f"[ERROR] search_offers: {e}")
@@ -124,14 +126,16 @@ print_and_log("[🚀] Robot Vast.ai v2.2 - Đang chạy")
 try:
     test_r = requests.get(f"{BASE_URL}/instances/?owner=me", headers=get_auth_headers(), timeout=10)
     print_and_log(f"[TEST] API Key status: {test_r.status_code}")
+    if test_r.status_code != 200:
+        print_and_log(f"[⚠️] Response: {test_r.text[:300]}")
 except Exception as e:
     print_and_log(f"[TEST] Lỗi kiểm tra API Key: {e}")
 
 while True:
     instances = get_my_instances()
-    active_count = sum(1 for inst in instances 
+    active_count = sum(1 for inst in instances
                       if inst.get("status") in ["running", "loading", "creating", "starting"])
-
+    
     print_and_log(f"[CHECK] Đang hoạt động: {active_count}/{MAX_INSTANCES}")
 
     # Cleanup máy lỗi
@@ -140,10 +144,13 @@ while True:
         inst_id = inst.get("id")
         if status in ["error", "dead", "stopped", "failed"]:
             print_and_log(f"🗑️ Xóa máy lỗi: {inst.get('gpu_name')} (ID: {inst_id})")
-            requests.delete(
-                f"{BASE_URL}/instances/{inst_id}/",
-                headers=get_auth_headers()
-            )
+            try:
+                requests.delete(
+                    f"{BASE_URL}/instances/{inst_id}/",
+                    headers=get_auth_headers()
+                )
+            except:
+                pass
             time.sleep(8)
 
     if active_count >= MAX_INSTANCES:
@@ -156,12 +163,11 @@ while True:
         time.sleep(30)
         continue
 
-    # Chọn máy rẻ nhất
     offers.sort(key=lambda x: float(x.get("dph_total", 999)))
     best = offers[0]
     price = float(best.get("dph_total", 0))
 
-    print_and_log(f"[🎯] Thuê máy: {best.get('gpu_name')} - ${price}/h (ID: {best['id']})")
+    print_and_log(f"[🎯] Thuê máy: {best.get('gpu_name')} - ${price}/h (ID: {best.get('id')})")
 
     rent_payload = {
         "image": "nvidia/cuda:12.4.1-runtime-ubuntu22.04",
@@ -184,5 +190,5 @@ while True:
         time.sleep(900)
     else:
         print_and_log(f"[❌] Thuê thất bại: {rent_resp.status_code}")
-        print(rent_resp.text[:400] if hasattr(rent_resp, 'text') else "")
+        print(rent_resp.text[:400] if hasattr(rent_resp, 'text') else "No response text")
         time.sleep(30)
