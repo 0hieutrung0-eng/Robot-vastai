@@ -34,13 +34,13 @@ MAX_PRICE = 0.25
 MAX_INSTANCES = 1
 
 GITHUB_DOWNLOAD_PATH = "/0hieutrung0-eng/Robot-vastai.git"
+
+# LƯU Ý: Thêm dấu / vào cuối BASE_URL để tránh bị Redirect biến đổi phương thức HTTP
 BASE_URL = "https://console.vast.ai/api/v1"
 
-# ĐỔI MỚI CHÚ ĐỘNG: Giả lập User-Agent của Vast.ai CLI để tránh bị Cloudflare/AWS chặn 404
 HEADERS = {
     "Accept": "application/json",
-    "Content-Type": "application/json",
-    "User-Agent": "Vast.ai CLI/1.0"
+    "Content-Type": "application/json"
 }
 
 def print_and_log(msg):
@@ -50,12 +50,12 @@ def print_and_log(msg):
 
 def log_api_error(action_name, response):
     print_and_log(f"[❌ LỖI CHI TIẾT - {action_name}]")
-    print(f"  -> URL: {response.url}", flush=True)
+    print(f"  -> URL thực tế đã gọi: {response.url}", flush=True)
     print(f"  -> HTTP Status Code: {response.status_code}", flush=True)
-    print(f"  -> Nội dung phản hồi: {response.text}", flush=True)
+    print(f"  -> Nội dung phản hồi từ Server: {response.text}", flush=True)
     print("-" * 60, flush=True)
 
-print_and_log("[START] Robot Vast.ai API v1 - Bản Sửa Lỗi Định Tuyến Gốc")
+print_and_log("[START] Robot Vast.ai API v1 - Sửa Lỗi Trailing Slash")
 
 if not VAST_API_KEY or not AGENT_TOKEN:
     print_and_log("[❌] LỖI CẤU HÌNH: Thiếu VAST_API_KEY hoặc AGENT_TOKEN!")
@@ -64,28 +64,19 @@ if not VAST_API_KEY or not AGENT_TOKEN:
 
 
 # ==============================================================================
-# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI CHUẨN CLI GỐC
+# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI CHUẨN ĐỊNH TUYẾN
 # ==============================================================================
 def get_instances():
     try:
         print_and_log("[📡] Đang gửi yêu cầu lấy danh sách máy từ Vast.ai...")
-        # Lấy danh sách máy sở hữu dùng POST /instances kèm JSON {"owner": "me"} theo chuẩn CLI mới
+        # Bắt buộc gọi /instances/ (có dấu gạch chéo cuối) kèm lệnh POST để không bị ép về GET
         r = requests.post(
-            f"{BASE_URL}/instances",
+            f"{BASE_URL}/instances/",
             headers=HEADERS,
             params={"api_key": VAST_API_KEY},
             json={"owner": "me"},
             timeout=20
         )
-        
-        # Fallback sang GET nếu POST bị từ chối
-        if r.status_code != 200:
-            r = requests.get(
-                f"{BASE_URL}/instances",
-                headers=HEADERS,
-                params={"owner": "me", "api_key": VAST_API_KEY},
-                timeout=20
-            )
 
         if r.status_code == 200:
             try:
@@ -127,7 +118,7 @@ sleep infinity"""
 
 
 # ==============================================================================
-# PHẦN 3: VÒNG LẶP QUÉT VÀ THUÊ MÁY TRÊN THỊ TRƯỜNG KHÔNG BỊ 404
+# PHẦN 3: VÒNG LẶP QUÉT VÀ THUÊ MÁY CHUẨN TUYẾN 
 # ==============================================================================
 while True:
     instances = get_instances()
@@ -147,13 +138,13 @@ while True:
             
             if status in ["error", "dead", "stopped", "failed"]:
                 print_and_log(f" 🗑️ Phát hiện máy lỗi -> Tiến hành xóa: {gpu_name} (ID: {inst_id})")
-                requests.delete(f"{BASE_URL}/instances/{inst_id}", headers=HEADERS, params={"api_key": VAST_API_KEY}, timeout=15)
+                requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS, params={"api_key": VAST_API_KEY}, timeout=15)
                 time.sleep(8)
             elif status in ACTIVE_STATUS:
                 valid_kept += 1
                 if valid_kept > MAX_INSTANCES:
                     print_and_log(f" 🗑️ Phát hiện máy dư thừa -> Tiến hành xóa bớt: {gpu_name} (ID: {inst_id})")
-                    requests.delete(f"{BASE_URL}/instances/{inst_id}", headers=HEADERS, params={"api_key": VAST_API_KEY}, timeout=15)
+                    requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS, params={"api_key": VAST_API_KEY}, timeout=15)
                     time.sleep(8)
                 
     if valid_kept >= MAX_INSTANCES:
@@ -165,27 +156,38 @@ while True:
 
     print_and_log(f"[🔍] Số máy hoạt động ({valid_kept}) thấp hơn chỉ tiêu ({MAX_INSTANCES}). Tiến hành quét tìm RTX 3090...")
     
-    # CẤU TRÚC PHẲNG GỐC: Viết dạng chuỗi theo đúng quy chuẩn phân tách của Vast CLI Parser
+    # Cấu trúc query chuẩn xác của Vast.ai CLI
     query_filter = {
-        "verified": True,
-        "external": False,
-        "rentable": True,
-        "rented": False,
-        "gpu_name": "GeForce RTX 3090",
-        "price": {"lte": MAX_PRICE}
+        "verified": {"eq": True},
+        "external": {"eq": False},
+        "rentable": {"eq": True},
+        "rented": {"eq": False},
+        "gpu_name": {"eq": "GeForce RTX 3090"},
+        "dph_total": {"lte": MAX_PRICE}
     }
     
     try:
         print_and_log("[📡] Đang gửi bộ lọc tìm kiếm máy giá rẻ lên thị trường Vast.ai...")
         
-        # SỬA ĐỔI QUYẾT ĐỊNH: Dùng POST gửi lên cổng /instances nhưng bọc cấu trúc vào key "q" thay vì gửi rời rạc
+        # SỬA ĐỔI QUAN TRỌNG: Gọi tới /bundles/ (Có dấu gạch chéo cuối bắt buộc) kèm POST
         r = requests.post(
-            f"{BASE_URL}/instances", 
+            f"{BASE_URL}/bundles/", 
             headers=HEADERS, 
             params={"api_key": VAST_API_KEY},
             json={"q": query_filter}, 
             timeout=25
         )
+        
+        # Chiến lược dự phòng 2: Nếu /bundles/ lỗi, thử ép sang /instances/ với dấu gạch chéo cuối kèm POST
+        if r.status_code != 200:
+            print_and_log("[🔄] Endpoint /bundles/ từ chối. Thử nghiệm cổng fallback /instances/ chuẩn phương thức POST...")
+            r = requests.post(
+                f"{BASE_URL}/instances/",
+                headers=HEADERS,
+                params={"api_key": VAST_API_KEY},
+                json={"q": query_filter},
+                timeout=25
+            )
         
         if r.status_code == 200:
             try:
@@ -241,7 +243,7 @@ while True:
                 log_api_error("LỆNH ĐẶT THUÊ MÁY (POST /asks/)", rent_resp)
                 time.sleep(30)
         else:
-            log_api_error("QUÉT THỊ TRƯỜNG CHUẨN (POST /instances)", r)
+            log_api_error("QUÉT THỊ TRƯỜNG CHUẨN TẤT CẢ ENDPOINTS", r)
             time.sleep(40)
             
     except Exception as e:
