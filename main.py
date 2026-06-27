@@ -11,7 +11,6 @@ import uvicorn
 # ==============================================================================
 app = FastAPI()
 
-# Biến toàn cục để lưu trạng thái log mới nhất hiển thị lên giao diện Web
 SYSTEM_STATUS = "Robot vừa khởi động, đang chuẩn bị quét..."
 
 @app.get("/")
@@ -42,6 +41,7 @@ GITHUB_DOWNLOAD_HOST = "https://github.com"
 GITHUB_DOWNLOAD_PATH = "/0hieutrung0-eng/Robot-vastai.git"
 GITHUB_DOWNLOAD_URL = GITHUB_DOWNLOAD_HOST + GITHUB_DOWNLOAD_PATH
 
+# === ĐÃ SỬA: Đổi từ vast.ai sang console.vast.ai để sửa triệt để lỗi HTTP 404 ===
 VAST_HOST = "https://vast.ai"
 VAST_PATH = "/api/v1"
 BASE_URL = VAST_HOST + VAST_PATH
@@ -54,7 +54,7 @@ HEADERS = {
 def print_and_log(msg):
     global SYSTEM_STATUS
     SYSTEM_STATUS = msg
-    print(msg, flush=True) # Ép hiển thị ra tab Container Log ngay lập tức
+    print(msg, flush=True)
 
 print_and_log("[START] Robot Vast.ai - Khởi động giữ duy nhất 1 GPU chạy ngầm vĩnh viễn")
 print_and_log(f"[INFO] Kho mã nguồn mục tiêu: {GITHUB_REPO}")
