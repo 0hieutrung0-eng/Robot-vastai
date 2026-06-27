@@ -6,26 +6,26 @@ import time
 VAST_API_KEY = os.getenv("VAST_API_KEY", "").strip()
 AGENT_TOKEN = os.getenv("AGENT_TOKEN", "rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3").strip()
 
-MAX_PRICE = 0.25
+MAX_PRICE = 0.28          # Tăng nhẹ để dễ tìm máy hơn
 MAX_INSTANCES = 1
 
-BASE_URL = "https://console.vast.ai/api/v1"   # API v1 - Đã cập nhật
+BASE_URL = "https://console.vast.ai/api/v1"
 HEADERS = {
     "Authorization": f"Bearer {VAST_API_KEY}",
     "Content-Type": "application/json"
 }
 
-# ================== SỬA REPO CỦA BẠN TẠI ĐÂY ==================
-GITHUB_REPO = "https://github.com/YOUR_USERNAME/YOUR_REPO.git"   # ← BẮT BUỘC SỬA
+GITHUB_REPO = "https://github.com/YOUR_USERNAME/YOUR_REPO.git"   # ← SỬA LẠI
 
-print("[START] Robot Vast.ai - Chỉ giữ DUY NHẤT 1 GPU")
+print("[START] Robot Vast.ai - Giữ DUY NHẤT 1 GPU")
 
-# ====================== LẤY DANH SÁCH INSTANCES ======================
 def get_instances():
     try:
         r = requests.get(f"{BASE_URL}/instances/", headers=HEADERS, timeout=20)
         if r.status_code == 200:
-            return r.json().get("instances", [])
+            instances = r.json().get("instances", [])
+            print(f"[DEBUG] Tìm thấy {len(instances)} instances từ API")
+            return instances
         else:
             print(f"[ERROR] API instances: {r.status_code} - {r.text[:400]}")
             return []
@@ -33,71 +33,54 @@ def get_instances():
         print(f"[ERROR] Lấy instances: {e}")
         return []
 
-# ====================== ONSTART SCRIPT ======================
 def create_onstart_script():
     return f"""#!/bin/bash
 echo "=== Agent OnStart Started - $(date) ===" > /root/agent.log
-
 apt-get update && apt-get install -y git python3-pip curl
-
-echo "[1/3] Cloning repository..." >> /root/agent.log
+echo "[1/3] Cloning repo..." >> /root/agent.log
 rm -rf /app
 if git clone --depth 1 {GITHUB_REPO} /app; then
-    echo "→ Clone thành công" >> /root/agent.log
+    echo "→ Clone OK" >> /root/agent.log
 else
-    echo "→ Clone thất bại, tạo placeholder" >> /root/agent.log
+    echo "→ Clone fail, placeholder" >> /root/agent.log
     mkdir -p /app
-    echo 'import time; print("Placeholder running..."); time.sleep(999999)' > /app/main.py
+    echo 'import time; print("Placeholder..."); time.sleep(999999)' > /app/main.py
 fi
-
 cd /app
-
 if [ -f "requirements.txt" ]; then
-    echo "[2/3] Installing dependencies..." >> /root/agent.log
-    pip install -r requirements.txt --no-cache-dir -q || echo "Pip install warning" >> /root/agent.log
+    pip install -r requirements.txt --no-cache-dir -q >> /root/agent.log 2>&1
 fi
-
 echo "[3/3] Starting agent..." >> /root/agent.log
 export TOKEN="{AGENT_TOKEN}"
 nohup python3 main.py > /root/agent.log 2>&1 &
-
-echo "✅ Agent started successfully - $(date)" >> /root/agent.log
+echo "✅ Agent started - $(date)" >> /root/agent.log
 tail -f /dev/null
 """
 
-# ====================== VÒNG LẶP CHÍNH ======================
 while True:
     instances = get_instances()
     
     ACTIVE_STATUS = {"running", "loading", "creating", "starting"}
-    
     running_count = sum(1 for inst in instances if str(inst.get("status", "")).lower() in ACTIVE_STATUS)
+
     print(f"\n[CHECK] Running: {running_count} | Total: {len(instances)}")
 
     valid_kept = 0
     for inst in instances:
         inst_id = inst.get("id")
         status = str(inst.get("status", "")).lower()
-        gpu_name = inst.get("gpu_name", "Unknown")
+        gpu = inst.get("gpu_name", "Unknown")
 
-        # Xóa máy lỗi hoặc chết
-        if status in ["error", "dead", "stopped", "failed", "creating failed"]:
-            print(f"   🗑️ Xóa máy lỗi: {gpu_name} (ID: {inst_id})")
-            try:
-                requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS, timeout=15)
-            except:
-                pass
+        if status in ["error", "dead", "stopped", "failed"]:
+            print(f"   🗑️ Xóa máy lỗi: {gpu} (ID: {inst_id})")
+            requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS, timeout=15)
             time.sleep(8)
 
-        # Máy đang chạy bình thường
         elif status in ACTIVE_STATUS:
             valid_kept += 1
             if valid_kept > MAX_INSTANCES:
-                print(f"   🗑️ Xóa máy thừa: {gpu_name} (ID: {inst_id})")
-                try:
-                    requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS, timeout=15)
-                except:
-                    pass
+                print(f"   🗑️ Xóa máy thừa: {gpu} (ID: {inst_id})")
+                requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS, timeout=15)
                 time.sleep(8)
 
     if valid_kept >= MAX_INSTANCES:
@@ -105,8 +88,7 @@ while True:
         time.sleep(480)
         continue
 
-    # ====================== TÌM VÀ THUÊ MÁY ======================
-    print("[🔍] Đang tìm máy RTX 3090 series...")
+    print("[🔍] Đang tìm máy RTX 3090...")
 
     search_payload = {
         "rentable": {"eq": True},
@@ -114,44 +96,38 @@ while True:
         "dph_total": {"lte": MAX_PRICE},
         "gpu_name": {"in": ["RTX 3090 Ti", "RTX 3090"]},
         "order": [["dph_total", "asc"]],
-        "limit": 5
+        "limit": 8
     }
 
     try:
         resp = requests.post(f"{BASE_URL}/bundles/", headers=HEADERS, json=search_payload, timeout=20)
         offers = resp.json().get("offers", []) if resp.status_code == 200 else []
 
-        if not offers:
-            print("[⚠️] Không tìm thấy offer phù hợp")
-            time.sleep(40)
-            continue
+        if offers:
+            best = offers[0]
+            offer_id = best["id"]
+            gpu = best.get("gpu_name")
+            price = best.get("dph_total")
 
-        best = offers[0]
-        offer_id = best["id"]
-        gpu = best.get("gpu_name", "Unknown")
+            print(f"[🎯] Tìm thấy {gpu} - ${price}/h → Thuê...")
 
-        print(f"[🎯] Tìm thấy {gpu} → Đang thuê...")
+            rent_payload = {
+                "image": "nvidia/cuda:11.7.1-runtime-ubuntu22.04",
+                "disk": 40.0,
+                "runtype": "ssh_direct",
+                "onstart": create_onstart_script()
+            }
 
-        rent_payload = {
-            "image": "nvidia/cuda:11.7.1-runtime-ubuntu22.04",
-            "disk": 40.0,
-            "runtype": "ssh_direct",
-            "onstart": create_onstart_script()
-        }
+            rent_resp = requests.put(f"{BASE_URL}/asks/{offer_id}/", headers=HEADERS, json=rent_payload, timeout=90)
 
-        rent_resp = requests.put(f"{BASE_URL}/asks/{offer_id}/", 
-                               headers=HEADERS, 
-                               json=rent_payload, 
-                               timeout=90)
-
-        if rent_resp.status_code in (200, 201):
-            print(f"[🎉] THUÊ THÀNH CÔNG {gpu}!")
-            time.sleep(900)   # Chờ máy khởi động
+            if rent_resp.status_code in (200, 201):
+                print(f"[🎉] THUÊ THÀNH CÔNG {gpu}!")
+                time.sleep(900)
+            else:
+                print(f"[❌] Thuê thất bại: {rent_resp.status_code}")
         else:
-            print(f"[❌] Thuê thất bại: {rent_resp.status_code}")
-            print(f"Chi tiết: {rent_resp.text[:500]}")
-
+            print("[⚠️] Hiện không có máy 3090 nào dưới giá cho phép.")
     except Exception as e:
-        print(f"[ERROR] Quá trình tìm/thuê: {e}")
+        print(f"[ERROR] Tìm/thuê máy: {e}")
 
-    time.sleep(40)
+    time.sleep(60)   # Tăng thời gian nghỉ giữa các lần quét
