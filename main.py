@@ -34,13 +34,11 @@ MAX_PRICE = 0.25
 MAX_INSTANCES = 1
 
 GITHUB_DOWNLOAD_PATH = "/0hieutrung0-eng/Robot-vastai.git"
-
-# LƯU Ý: Thêm dấu / vào cuối BASE_URL để tránh bị Redirect biến đổi phương thức HTTP
 BASE_URL = "https://console.vast.ai/api/v1"
 
+# Headers tối giản theo chuẩn python-requests của Vast CLI
 HEADERS = {
-    "Accept": "application/json",
-    "Content-Type": "application/json"
+    "Accept": "application/json"
 }
 
 def print_and_log(msg):
@@ -55,7 +53,7 @@ def log_api_error(action_name, response):
     print(f"  -> Nội dung phản hồi từ Server: {response.text}", flush=True)
     print("-" * 60, flush=True)
 
-print_and_log("[START] Robot Vast.ai API v1 - Sửa Lỗi Trailing Slash")
+print_and_log("[START] Robot Vast.ai API v1 - Bản Chuẩn Hóa GET Phương Thức")
 
 if not VAST_API_KEY or not AGENT_TOKEN:
     print_and_log("[❌] LỖI CẤU HÌNH: Thiếu VAST_API_KEY hoặc AGENT_TOKEN!")
@@ -64,17 +62,19 @@ if not VAST_API_KEY or not AGENT_TOKEN:
 
 
 # ==============================================================================
-# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI CHUẨN ĐỊNH TUYẾN
+# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI CHUẨN ĐỊNH TUYẾN GET
 # ==============================================================================
 def get_instances():
     try:
         print_and_log("[📡] Đang gửi yêu cầu lấy danh sách máy từ Vast.ai...")
-        # Bắt buộc gọi /instances/ (có dấu gạch chéo cuối) kèm lệnh POST để không bị ép về GET
-        r = requests.post(
+        # BẮT BUỘC dùng GET /instances/ kèm tham số owner=me
+        r = requests.get(
             f"{BASE_URL}/instances/",
             headers=HEADERS,
-            params={"api_key": VAST_API_KEY},
-            json={"owner": "me"},
+            params={
+                "owner": "me",
+                "api_key": VAST_API_KEY
+            },
             timeout=20
         )
 
@@ -89,7 +89,7 @@ def get_instances():
             except ValueError:
                 return []
         else:
-            log_api_error("LẤY DANH SÁCH MÁY", r)
+            log_api_error("LẤY DANH SÁCH MÁY (GET /instances/)", r)
             return []
     except Exception as e:
         print_and_log(f"[ERROR] Ngoại lệ hàm get_instances: {e}")
@@ -118,7 +118,7 @@ sleep infinity"""
 
 
 # ==============================================================================
-# PHẦN 3: VÒNG LẶP QUÉT VÀ THUÊ MÁY CHUẨN TUYẾN 
+# PHẦN 3: VÒNG LẶP QUÉT VÀ THUÊ MÁY
 # ==============================================================================
 while True:
     instances = get_instances()
@@ -156,7 +156,7 @@ while True:
 
     print_and_log(f"[🔍] Số máy hoạt động ({valid_kept}) thấp hơn chỉ tiêu ({MAX_INSTANCES}). Tiến hành quét tìm RTX 3090...")
     
-    # Cấu trúc query chuẩn xác của Vast.ai CLI
+    # Bộ lọc truyền thống theo cấu trúc của PostgREST view bên trong Vast.ai
     query_filter = {
         "verified": {"eq": True},
         "external": {"eq": False},
@@ -169,25 +169,17 @@ while True:
     try:
         print_and_log("[📡] Đang gửi bộ lọc tìm kiếm máy giá rẻ lên thị trường Vast.ai...")
         
-        # SỬA ĐỔI QUAN TRỌNG: Gọi tới /bundles/ (Có dấu gạch chéo cuối bắt buộc) kèm POST
-        r = requests.post(
-            f"{BASE_URL}/bundles/", 
+        # SỬA ĐỔI QUAN TRỌNG NHẤT: Chuyển hoàn toàn sang GET /instances/ 
+        # và truyền bộ lọc `q` dưới dạng một chuỗi JSON String trực tiếp qua URL Params
+        r = requests.get(
+            f"{BASE_URL}/instances/", 
             headers=HEADERS, 
-            params={"api_key": VAST_API_KEY},
-            json={"q": query_filter}, 
+            params={
+                "q": json.dumps(query_filter),
+                "api_key": VAST_API_KEY
+            }, 
             timeout=25
         )
-        
-        # Chiến lược dự phòng 2: Nếu /bundles/ lỗi, thử ép sang /instances/ với dấu gạch chéo cuối kèm POST
-        if r.status_code != 200:
-            print_and_log("[🔄] Endpoint /bundles/ từ chối. Thử nghiệm cổng fallback /instances/ chuẩn phương thức POST...")
-            r = requests.post(
-                f"{BASE_URL}/instances/",
-                headers=HEADERS,
-                params={"api_key": VAST_API_KEY},
-                json={"q": query_filter},
-                timeout=25
-            )
         
         if r.status_code == 200:
             try:
@@ -197,14 +189,15 @@ while True:
                 time.sleep(40)
                 continue
                 
-            offers = res_data.get("offers", res_data.get("instances", res_data.get("results", [])))
+            # Đọc danh sách máy trả về
+            offers = res_data.get("instances", res_data.get("offers", res_data.get("results", [])))
             if not isinstance(offers, list) and isinstance(res_data, list):
                 offers = res_data
                 
             print_and_log(f"[📊] Kết quả tìm kiếm thị trường: Tìm thấy {len(offers or [])} máy phù hợp.")
             
             if not offers:
-                print_and_log(f"[⚠️] Không tìm thấy RTX 3090 nào dưới {MAX_PRICE}$. Quét lại sau 40 giây...")
+                print_and_log(f"[⚠️] Không tìm thấy RTX 3090 nào dưới {MAX_PRICE}$ thỏa mãn bộ lọc. Thử lại sau 40 giây...")
                 time.sleep(40)
                 continue
                 
@@ -213,6 +206,7 @@ while True:
                 time.sleep(40)
                 continue
                 
+            # Sắp xếp và chọn máy có giá tốt nhất
             valid_offers.sort(key=lambda x: float(x.get("dph_total", x.get("price", 999))))
             best = valid_offers[0]
             offer_id = best["id"]
@@ -243,7 +237,7 @@ while True:
                 log_api_error("LỆNH ĐẶT THUÊ MÁY (POST /asks/)", rent_resp)
                 time.sleep(30)
         else:
-            log_api_error("QUÉT THỊ TRƯỜNG CHUẨN TẤT CẢ ENDPOINTS", r)
+            log_api_error("QUÉT THỊ TRƯỜNG TOÀN DIỆN (GET /instances/)", r)
             time.sleep(40)
             
     except Exception as e:
