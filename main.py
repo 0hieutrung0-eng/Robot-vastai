@@ -9,16 +9,18 @@ AGENT_TOKEN = os.getenv("AGENT_TOKEN", "rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3")
 MAX_PRICE = 0.30
 MAX_INSTANCES = 1
 
-# ====================== TÁCH BIẾN ĐƯỜNG DẪN GITHUB ======================
+# ====================== TÁCH BIẾN ĐƯỜNG DẪN GITHUB XEM WEB ======================
 GITHUB_HOST = "https://github.com"
 GITHUB_PATH = "/0hieutrung0-eng/Robot-vastai/tree/main"
-# 1. Đường dẫn gốc của bạn để hiển thị thông tin log hệ thống
 GITHUB_REPO = GITHUB_HOST + GITHUB_PATH
-# 2. BẮT BUỘC: Đường dẫn API chuẩn Git (.git) gửi cho máy ảo Vast.ai kéo code thành công
-GITHUB_DOWNLOAD_URL = "https://github.com"
+
+# ====================== TÁCH BIẾN ĐƯỜNG DẪN GITHUB TẢI FILE (.GIT) ======================
+GITHUB_DOWNLOAD_HOST = "https://github.com"
+GITHUB_DOWNLOAD_PATH = "/0hieutrung0-eng/Robot-vastai.git"
+GITHUB_DOWNLOAD_URL = GITHUB_DOWNLOAD_HOST + GITHUB_DOWNLOAD_PATH
 
 # ====================== TÁCH BIẾN BASE URL VAST.AI ======================
-VAST_HOST = "https://console.vast.ai"
+VAST_HOST = "https://vast.ai"
 VAST_PATH = "/api/v1"
 BASE_URL = VAST_HOST + VAST_PATH
 
@@ -38,7 +40,7 @@ def get_instances():
         return []
 
 def create_onstart_script():
-    # Sử dụng GITHUB_DOWNLOAD_URL (.git) để lệnh git clone hoạt động chính xác 100%
+    # Sử dụng biến GITHUB_DOWNLOAD_URL đã ghép từ 2 biến tách rời để kéo code không bị gãy
     return f"""#!/bin/bash
 apt-get update && apt-get install -y git python3-pip
 rm -rf /app
@@ -66,7 +68,7 @@ while True:
     if active < MAX_INSTANCES:
         print("[🔍] Tìm máy RTX 3090...")
         
-        # Đã đồng bộ với ảnh điện thoại của bạn: Xóa bỏ hoàn toàn "verified" và ép buộc num_gpus = 1
+        # BỘ LỌC ĐÃ CHUẨN HÓA: Bỏ hoàn toàn trường verified để nhận diện máy Unverified rẻ nhất
         payload = {
             "external": {"eq": False},
             "rentable": {"eq": True},
@@ -82,7 +84,7 @@ while True:
             
             if offers:
                 offers.sort(key=lambda x: x.get("dph_total", 999))
-                # Sử dụng hàm rút phần tử .pop(0) để bảo toàn biến chỉ mục hiển thị
+                # Rút phần tử đầu tiên (giá rẻ nhất) ra thông qua hàm .pop(0) để an toàn định dạng
                 best = offers.pop(0)
                 print(f"[🎯] Thuê {best.get('gpu_name')} - Giá: {best.get('dph_total')}$")
                 
