@@ -10,7 +10,6 @@ import uvicorn
 # PHẦN 1: KHỞI TẠO MÁY CHỦ WEB BẮT BUỘC ĐỂ GIỮ HUGGING FACE SPACES LUÔN "RUNNING"
 # ==============================================================================
 app = FastAPI()
-
 SYSTEM_STATUS = "Robot vừa khởi động, đang chuẩn bị quét..."
 
 @app.get("/")
@@ -45,9 +44,10 @@ VAST_HOST = "https://console.vast.ai"
 VAST_PATH = "/api/v1"
 BASE_URL = VAST_HOST + VAST_PATH
 
+# Headers chuẩn xác theo tài liệu Vast.ai SDK
 HEADERS = {
     "Accept": "application/json",
-    "Content-Type": "application/json"
+    "Authorization": f"Bearer {VAST_API_KEY}"
 }
 
 def print_and_log(msg):
@@ -55,28 +55,25 @@ def print_and_log(msg):
     SYSTEM_STATUS = msg
     print(msg, flush=True)
 
-print_and_log("[START] Robot Vast.ai API v1 Engine Fixed - Khởi động")
+print_and_log("[START] Robot Vast.ai API v1 Production - Khởi động")
 
 if not VAST_API_KEY or not AGENT_TOKEN:
     print_and_log("[❌] LỖI CẤU HÌNH: Vui lòng điền VAST_API_KEY và AGENT_TOKEN vào Environment Variables!")
     while True:
         time.sleep(3600)
 
-print_and_log(f"[INFO] Kho mã nguồn mục tiêu: {GITHUB_REPO}")
-
 
 # ==============================================================================
-# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI
+# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI CHUẨN SDK
 # ==============================================================================
 def get_instances():
     try:
         print_and_log("[📡] Đang gửi yêu cầu lấy danh sách máy từ Vast.ai...")
-        # API v1 yêu cầu dùng POST kèm {"owner": "me"} để lấy danh sách máy đã thuê
-        r = requests.post(
+        # Lấy danh sách máy sở hữu: Endpoint GET /instances kèm tham số owner=me
+        r = requests.get(
             f"{BASE_URL}/instances",
             headers=HEADERS,
-            params={"api_key": VAST_API_KEY},
-            json={"owner": "me"},
+            params={"owner": "me", "api_key": VAST_API_KEY},
             timeout=20
         )
 
@@ -110,7 +107,7 @@ rm -rf /app
 if git clone --depth 1 {AUTHENTICATED_URL} /app; then
     echo "→ Clone thành công" >> /root/agent.log
 else
-    echo "→ Clone thất bại" >> /root/agent.log
+    echo "→ Clone taxation" >> /root/agent.log
 fi
 cd /app
 if [ -f "requirements.txt" ]; then
@@ -147,7 +144,7 @@ while True:
             elif status in ACTIVE_STATUS:
                 valid_kept += 1
                 if valid_kept > MAX_INSTANCES:
-                    print_and_log(f" 🗑️ Phát hiện máy dư thừa -> Tiến hành xóa máy thừa: {gpu_name} (ID: {inst_id})")
+                    print_and_log(f" 🗑️ Phát hiện máy dư thừa -> Xóa bớt máy: {gpu_name} (ID: {inst_id})")
                     requests.delete(f"{BASE_URL}/instances/{inst_id}", headers=HEADERS, params={"api_key": VAST_API_KEY}, timeout=15)
                     time.sleep(8)
                 
@@ -160,24 +157,29 @@ while True:
 
     print_and_log(f"[🔍] Số máy hoạt động ({valid_kept}) thấp hơn chỉ tiêu ({MAX_INSTANCES}). Tiến hành quét tìm RTX 3090...")
     
-    # Cấu trúc query filter chuẩn xác cho việc tìm kiếm công khai
+    # Cấu trúc bộ lọc thị trường theo đúng định dạng JSON String của Vast.ai CLI
     query_filter = {
-        "verified": {"eq": True},
-        "external": {"eq": False},
-        "rentable": {"eq": True},
-        "rented": {"eq": False},
-        "gpu_name": {"eq": "GeForce RTX 3090"},
-        "dph_total": {"lte": MAX_PRICE}
+        "verified": True,
+        "external": False,
+        "rentable": True,
+        "rented": False,
+        "gpu_name": "GeForce RTX 3090",
+        "price": {"lte": MAX_PRICE}
     }
     
     try:
         print_and_log("[📡] Đang gửi bộ lọc tìm kiếm máy giá rẻ lên thị trường Vast.ai...")
-        # SỬA ĐỔI QUAN TRỌNG: Đổi endpoint tìm kiếm công khai từ /bundles thành /instances (POST)
-        r = requests.post(
-            f"{BASE_URL}/instances", 
+        
+        # ĐIỂM SỬA ĐỔI QUAN TRỌNG NHẤT: Ép kiểu dict bộ lọc thành chuỗi JSON string đẩy vào param URL qua lệnh GET
+        query_json_string = json.dumps(query_filter)
+        
+        r = requests.get(
+            f"{BASE_URL}/bundles", 
             headers=HEADERS, 
-            params={"api_key": VAST_API_KEY},
-            json={"q": query_filter}, 
+            params={
+                "q": query_json_string,
+                "api_key": VAST_API_KEY
+            }, 
             timeout=25
         )
         
@@ -207,11 +209,13 @@ while True:
                 time.sleep(40)
                 continue
                 
-            valid_offers.sort(key=lambda x: float(x.get("dph_total", 999)))
+            # Sắp xếp chọn máy có giá dph_total hoặc dph_rent tốt nhất
+            valid_offers.sort(key=lambda x: float(x.get("dph_total", x.get("price", 999))))
             best = valid_offers[0]
             offer_id = best["id"]
             gpu = best.get("gpu_name", "Unknown")
-            price = best.get("dph_total")
+            price = best.get("dph_total", best.get("price"))
+            
             print_and_log(f"[🎯] ĐÃ TÌM THẤY MÁY TỐT NHẤT: {gpu} giá {price}$/giờ! Đang gửi lệnh THUÊ NGAY...")
             
             rent_payload = {
@@ -222,7 +226,7 @@ while True:
             }
             
             rent_resp = requests.post(
-                f"{BASE_URL}/asks/{offer_id}", 
+                f"{BASE_URL}/asks/{offer_id}/", 
                 headers=HEADERS, 
                 params={"api_key": VAST_API_KEY},
                 json=rent_payload, 
