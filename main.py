@@ -64,9 +64,8 @@ while True:
     if active < MAX_INSTANCES:
         print("[🔍] Tìm máy RTX 3090...")
         
-        # ĐÃ SỬA ĐÚNG: Nới lỏng bộ lọc Verified và giới hạn 1 GPU để nhận máy rẻ
+        # ĐÃ KHẮC PHỤC DỨT ĐIỂM: Xóa bỏ hoàn toàn bộ lọc "verified" để API không trả về mảng trống
         payload = {
-            "verified": {"eq": False},
             "external": {"eq": False},
             "rentable": {"eq": True},
             "rented": {"eq": False},
