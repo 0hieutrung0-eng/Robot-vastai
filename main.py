@@ -10,11 +10,7 @@ SYSTEM_STATUS = "Robot đang khởi động..."
 
 @app.get("/")
 def read_root():
-    return {
-        "status": "active",
-        "message": SYSTEM_STATUS,
-        "time": time.strftime("%Y-%m-%d %H:%M:%S")
-    }
+    return {"status": "active", "message": SYSTEM_STATUS, "time": time.strftime("%Y-%m-%d %H:%M:%S")}
 
 def run_web_server():
     uvicorn.run(app, host="0.0.0.0", port=7860, log_level="warning")
@@ -45,7 +41,7 @@ def print_and_log(msg):
     print(msg, flush=True)
 
 if not VAST_API_KEY or not AGENT_TOKEN:
-    print_and_log("[❌] Thiếu VAST_API_KEY hoặc AGENT_TOKEN!")
+    print_and_log("[❌] Thiếu API key!")
     while True: time.sleep(3600)
 
 # ========================== ONSTART ==========================
@@ -67,59 +63,80 @@ cd /app
 [ -f requirements.txt ] && pip install -r requirements.txt --no-cache-dir -q
 export TOKEN="{AGENT_TOKEN}"
 nohup python3 main.py > agent.log 2>&1 &
-echo "→ Main agent started" >> /root/agent.log
+echo "→ Agent started" >> /root/agent.log
 sleep infinity
 """
 
-# ========================== API ==========================
-def get_my_instances():
-    try:
-        r = requests.get(f"{BASE_URL}/instances/?owner=me", headers=get_auth_headers(), timeout=20)
-        return r.json().get("instances", []) if r.status_code == 200 else []
-    except Exception as e:
-        print_and_log(f"[ERROR] get_my_instances: {e}")
-        return []
-
+# ========================== SEARCH ENGINE ==========================
 def search_offers():
-    # Query theo kiểu string (cách CLI dùng)
-    query_str = "verified=true rentable=true gpu_name=RTX_3090 dph_total<=0.25 type=on-demand limit=10"
+    search_endpoints = [
+        "/bundles/",
+        "/offers/search/",
+        "/instances/search/",
+        "/search/offers/",
+        "/offers/",
+        "/instances/query/",
+        "/query/",
+        "/asks/search/",
+        "/search/"
+    ]
     
-    try:
-        print_and_log("[TRY] Tìm máy RTX 3090...")
-        r = requests.get(
-            f"{BASE_URL}/instances/search/",
-            headers=get_auth_headers(),
-            params={"query": query_str},
-            timeout=25
-        )
-        print_and_log(f"[DEBUG] Search status: {r.status_code}")
+    query_json = {
+        "verified": True,
+        "rentable": True,
+        "gpu_name": {"in": ["RTX 3090", "RTX 3090 Ti"]},
+        "dph_total": {"lte": MAX_PRICE},
+        "type": "on-demand",
+        "limit": 10
+    }
+    
+    query_str = "verified=true rentable=true gpu_name~RTX_3090 dph_total<=0.25 limit=10"
+    
+    for ep in search_endpoints:
+        url = BASE_URL + ep
+        print_and_log(f"[TRY] {ep}")
         
-        if r.status_code == 200:
-            data = r.json()
-            offers = data.get("offers") or data.get("instances") or data.get("results") or []
-            print_and_log(f"[✅] Tìm thấy {len(offers)} offer!")
-            return offers
-        else:
-            print_and_log(f"[❌] Search failed {r.status_code} - {r.text[:400]}")
-            return []
-    except Exception as e:
-        print_and_log(f"[ERROR] search_offers: {e}")
-        return []
+        # Thử POST JSON
+        try:
+            r = requests.post(url, headers=get_auth_headers(), json=query_json, timeout=15)
+            print_and_log(f"   → POST JSON: {r.status_code}")
+            if r.status_code == 200:
+                data = r.json()
+                offers = data.get("offers") or data.get("instances") or data.get("results") or []
+                if offers:
+                    print_and_log(f"[✅] THÀNH CÔNG! Tìm thấy {len(offers)} máy.")
+                    return offers
+        except:
+            pass
+        
+        # Thử GET với query string
+        try:
+            r = requests.get(url, headers=get_auth_headers(), params={"q": query_str}, timeout=15)
+            print_and_log(f"   → GET query: {r.status_code}")
+            if r.status_code == 200:
+                data = r.json()
+                offers = data.get("offers") or data.get("instances") or []
+                if offers:
+                    print_and_log(f"[✅] THÀNH CÔNG! Tìm thấy {len(offers)} máy.")
+                    return offers
+        except:
+            pass
+    
+    print_and_log("[❌] Không tìm thấy endpoint search nào hoạt động.")
+    return []
 
-# ========================== MAIN LOOP ==========================
-print_and_log("[🚀] Robot Vast.ai v2.5 - Search fix")
+# ========================== MAIN ==========================
+print_and_log("[🚀] Robot Vast.ai v2.7 - Exhaustive Search")
 
 while True:
-    instances = get_my_instances()
+    instances = get_my_instances() if 'get_my_instances' in globals() else []
     active_count = sum(1 for inst in instances if inst.get("status") in ["running", "loading", "creating", "starting"])
     print_and_log(f"[CHECK] Đang hoạt động: {active_count}/{MAX_INSTANCES}")
 
+    # Cleanup
     for inst in instances:
         if str(inst.get("status", "")).lower() in ["error", "dead", "stopped", "failed"]:
-            inst_id = inst.get("id")
-            print_and_log(f"🗑️ Xóa máy lỗi ID: {inst_id}")
-            requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=get_auth_headers())
-            time.sleep(8)
+            requests.delete(f"{BASE_URL}/instances/{inst.get('id')}/", headers=get_auth_headers())
 
     if active_count >= MAX_INSTANCES:
         time.sleep(480)
@@ -127,15 +144,14 @@ while True:
 
     offers = search_offers()
     if not offers:
-        time.sleep(40)
+        time.sleep(45)
         continue
 
     offers.sort(key=lambda x: float(x.get("dph_total", 999)))
     best = offers[0]
-    price = float(best.get("dph_total", 0))
+    print_and_log(f"[🎯] Chọn máy: {best.get('gpu_name')} - ${best.get('dph_total')}/h")
 
-    print_and_log(f"[🎯] Thuê máy: {best.get('gpu_name')} - ${price}/h")
-
+    # Rent
     rent_payload = {
         "image": "nvidia/cuda:12.4.1-runtime-ubuntu22.04",
         "disk": 50,
@@ -153,8 +169,8 @@ while True:
     )
 
     if rent_resp.status_code in (200, 201):
-        print_and_log("[🎉] THUÊ THÀNH CÔNG! Chờ boot...")
+        print_and_log("[🎉] THUÊ THÀNH CÔNG!")
         time.sleep(900)
     else:
-        print_and_log(f"[❌] Thuê thất bại: {rent_resp.status_code}")
+        print_and_log(f"[❌] Thuê lỗi {rent_resp.status_code}")
         time.sleep(30)
