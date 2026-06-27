@@ -55,7 +55,7 @@ def print_and_log(msg):
     SYSTEM_STATUS = msg
     print(msg, flush=True)
 
-print_and_log("[START] Robot Vast.ai API v1 Engine Stable - Khởi động")
+print_and_log("[START] Robot Vast.ai API v1 Engine Fixed - Khởi động")
 
 if not VAST_API_KEY or not AGENT_TOKEN:
     print_and_log("[❌] LỖI CẤU HÌNH: Vui lòng điền VAST_API_KEY và AGENT_TOKEN vào Environment Variables!")
@@ -71,21 +71,14 @@ print_and_log(f"[INFO] Kho mã nguồn mục tiêu: {GITHUB_REPO}")
 def get_instances():
     try:
         print_and_log("[📡] Đang gửi yêu cầu lấy danh sách máy từ Vast.ai...")
-        r = requests.get(
-            f"{BASE_URL}/instances", 
-            headers=HEADERS, 
-            params={"api_key": VAST_API_KEY}, 
+        # API v1 yêu cầu dùng POST kèm {"owner": "me"} để lấy danh sách máy đã thuê
+        r = requests.post(
+            f"{BASE_URL}/instances",
+            headers=HEADERS,
+            params={"api_key": VAST_API_KEY},
+            json={"owner": "me"},
             timeout=20
         )
-        
-        if r.status_code == 404 or "predicate mismatch" in r.text:
-            r = requests.post(
-                f"{BASE_URL}/instances",
-                headers=HEADERS,
-                params={"api_key": VAST_API_KEY},
-                json={"owner": "me"},
-                timeout=20
-            )
 
         if r.status_code == 200:
             try:
@@ -167,20 +160,21 @@ while True:
 
     print_and_log(f"[🔍] Số máy hoạt động ({valid_kept}) thấp hơn chỉ tiêu ({MAX_INSTANCES}). Tiến hành quét tìm RTX 3090...")
     
-    # Bộ lọc query tinh chỉnh: Kết hợp giữa so sánh tuyệt đối và toán tử logic của API v1
+    # Cấu trúc query filter chuẩn xác cho việc tìm kiếm công khai
     query_filter = {
-        "verified": True,
-        "external": False,
-        "rentable": True,
-        "rented": False,
-        "gpu_name": "GeForce RTX 3090",
+        "verified": {"eq": True},
+        "external": {"eq": False},
+        "rentable": {"eq": True},
+        "rented": {"eq": False},
+        "gpu_name": {"eq": "GeForce RTX 3090"},
         "dph_total": {"lte": MAX_PRICE}
     }
     
     try:
         print_and_log("[📡] Đang gửi bộ lọc tìm kiếm máy giá rẻ lên thị trường Vast.ai...")
+        # SỬA ĐỔI QUAN TRỌNG: Đổi endpoint tìm kiếm công khai từ /bundles thành /instances (POST)
         r = requests.post(
-            f"{BASE_URL}/bundles", 
+            f"{BASE_URL}/instances", 
             headers=HEADERS, 
             params={"api_key": VAST_API_KEY},
             json={"q": query_filter}, 
@@ -195,7 +189,6 @@ while True:
                 time.sleep(40)
                 continue
                 
-            # Lấy danh sách các ưu đãi linh hoạt từ các cấu trúc phản hồi có thể xảy ra
             offers = []
             if isinstance(res_data, dict):
                 offers = res_data.get("instances", res_data.get("results", res_data.get("offers", [])))
@@ -209,7 +202,6 @@ while True:
                 time.sleep(40)
                 continue
                 
-            # Lọc bỏ các phần tử lỗi cấu trúc (nếu có) trước khi sắp xếp giá dph_total
             valid_offers = [o for o in offers if isinstance(o, dict) and o.get("id") is not None]
             if not valid_offers:
                 time.sleep(40)
@@ -230,22 +222,12 @@ while True:
             }
             
             rent_resp = requests.post(
-                f"{BASE_URL}/asks/{offer_id}/", 
+                f"{BASE_URL}/asks/{offer_id}", 
                 headers=HEADERS, 
                 params={"api_key": VAST_API_KEY},
                 json=rent_payload, 
                 timeout=90
             )
-            
-            # Khắc phục lỗi định tuyến /asks/ nếu API yêu cầu dấu gạch chéo cuối cho lệnh đặt chỗ
-            if rent_resp.status_code == 404:
-                rent_resp = requests.post(
-                    f"{BASE_URL}/asks/{offer_id}", 
-                    headers=HEADERS, 
-                    params={"api_key": VAST_API_KEY},
-                    json=rent_payload, 
-                    timeout=90
-                )
             
             if rent_resp.status_code in (200, 201):
                 print_and_log(f"[🎉] XÁC NHẬN: THUÊ THÀNH CÔNG MÁY {gpu}! Tạm nghỉ 15 phút chờ máy setup...")
