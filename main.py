@@ -28,8 +28,10 @@ threading.Thread(target=run_web_server, daemon=True).start()
 
 
 # ====================== CẤU HÌNH HỆ THỐNG VÀ KEY XÁC THỰC ======================
-VAST_API_KEY = os.getenv("VAST_API_KEY", "059fe4f97a115c4d837ffe2e60a9505660146f398efdfe3a8da1ca86c2f803f3").strip()
-AGENT_TOKEN = os.getenv("AGENT_TOKEN", "rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3").strip()
+# LẤY TỪ BIẾN MÔI TRƯỜNG ĐỂ ĐẢM BẢO BẢO MẬT (CẤU HÌNH TRÊN HUGGING FACE SETTINGS)
+VAST_API_KEY = os.getenv("VAST_API_KEY", "").strip()
+AGENT_TOKEN = os.getenv("AGENT_TOKEN", "").strip()
+
 MAX_PRICE = 0.25
 MAX_INSTANCES = 1
 
@@ -39,7 +41,6 @@ GITHUB_REPO = GITHUB_HOST + GITHUB_PATH
 
 GITHUB_DOWNLOAD_HOST = "https://github.com"
 GITHUB_DOWNLOAD_PATH = "/0hieutrung0-eng/Robot-vastai.git"
-GITHUB_DOWNLOAD_URL = GITHUB_DOWNLOAD_HOST + GITHUB_DOWNLOAD_PATH
 
 VAST_HOST = "https://vast.ai"
 VAST_PATH = "/api/v0"
@@ -58,6 +59,14 @@ def print_and_log(msg):
     print(msg, flush=True)
 
 print_and_log("[START] Robot Vast.ai - Khởi động giữ duy nhất 1 GPU chạy ngầm vĩnh viễn")
+
+# Kiểm tra xem đã cấu hình key chưa trước khi chạy vòng lặp
+if not VAST_API_KEY or not AGENT_TOKEN:
+    print_and_log("[❌] LỖI CẤU HÌNH: Vui lòng điền VAST_API_KEY và AGENT_TOKEN vào Environment Variables!")
+    # Treo luồng chính để không crash container liên tục
+    while True:
+        time.sleep(3600)
+
 print_and_log(f"[INFO] Kho mã nguồn mục tiêu: {GITHUB_REPO}")
 
 
@@ -67,7 +76,8 @@ print_and_log(f"[INFO] Kho mã nguồn mục tiêu: {GITHUB_REPO}")
 def get_instances():
     try:
         print_and_log("[📡] Đang gửi yêu cầu lấy danh sách máy từ Vast.ai...")
-        r = requests.get(f"{BASE_URL}/instances/", headers=HEADERS, params={"api_key": VAST_API_KEY}, timeout=20)
+        # Đưa api_key vào cả Header và Params để đảm bảo xác thực thành công trên mọi API v0
+        r = requests.get(f"{BASE_URL}/instances", headers=HEADERS, params={"api_key": VAST_API_KEY}, timeout=20)
         
         if r.status_code == 200:
             try:
@@ -122,13 +132,14 @@ while True:
         status = str(inst.get("status", "")).lower()
         gpu_name = inst.get("gpu_name", "Unknown")
         
-        # SỬA ĐỔI CHUẨN XÁC: Endpoint xóa máy bỏ dấu gạch chéo cuối ID để tránh lỗi 404
+        # Xử lý xóa máy lỗi / không hoạt động
         if status in ["error", "dead", "stopped", "failed"]:
             print_and_log(f" 🗑️ Phát hiện máy lỗi -> Tiến hành xóa: {gpu_name} (ID: {inst_id})")
             requests.delete(f"{BASE_URL}/instances/{inst_id}", headers=HEADERS, params={"api_key": VAST_API_KEY}, timeout=15)
             time.sleep(8)
         elif status in ACTIVE_STATUS:
             valid_kept += 1
+            # Nếu số máy hoạt động vượt quá số lượng mục tiêu thì xóa bớt máy thừa
             if valid_kept > MAX_INSTANCES:
                 print_and_log(f" 🗑️ Phát hiện máy dư thừa -> Tiến hành xóa máy thừa: {gpu_name} (ID: {inst_id})")
                 requests.delete(f"{BASE_URL}/instances/{inst_id}", headers=HEADERS, params={"api_key": VAST_API_KEY}, timeout=15)
@@ -143,7 +154,7 @@ while True:
 
     print_and_log(f"[🔍] Số máy hoạt động ({valid_kept}) thấp hơn chỉ tiêu ({MAX_INSTANCES}). Tiến hành quét tìm RTX 3090...")
     
-    # Cú pháp bộ lọc query chính xác tương thích với công cụ tìm kiếm của Vast.ai v0
+    # Cú pháp bộ lọc query tương thích chính xác với API Vast.ai v0
     query_filter = {
         "rentable": {"eq": True},
         "rented": {"eq": False},
@@ -158,7 +169,7 @@ while True:
     
     try:
         print_and_log("[📡] Đang gửi bộ lọc tìm kiếm máy giá rẻ lên thị trường Vast.ai...")
-        r = requests.get(f"{BASE_URL}/bundles/", headers=HEADERS, params=search_params, timeout=20)
+        r = requests.get(f"{BASE_URL}/bundles", headers=HEADERS, params=search_params, timeout=20)
         
         if r.status_code == 200:
             try:
@@ -176,6 +187,7 @@ while True:
                 time.sleep(40)
                 continue
                 
+            # Lựa chọn máy có giá tốt nhất (thấp nhất)
             offers.sort(key=lambda x: x.get("dph_total", 999))
             best = offers.pop(0)
             offer_id = best["id"]
@@ -190,8 +202,8 @@ while True:
                 "onstart": create_onstart_script()
             }
             
-            # SỬA ĐỔI TRIỆT ĐỂ: Phương thức PUT gửi vào cấu trúc endpoint /asks/{offer_id}/ chuẩn tài liệu REST Vast.ai
-            rent_resp = requests.put(
+            # SỬA ĐỔI CHUẨN: Sử dụng phương thức POST để yêu cầu tạo máy mới từ bundle/ask ID
+            rent_resp = requests.post(
                 f"{BASE_URL}/asks/{offer_id}/", 
                 headers=HEADERS, 
                 params={"api_key": VAST_API_KEY},
