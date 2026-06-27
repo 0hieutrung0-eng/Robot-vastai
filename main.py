@@ -47,7 +47,7 @@ def print_and_log(msg):
     SYSTEM_STATUS = msg
     print(msg, flush=True)
 
-print_and_log("[START] Robot Vast.ai v1 - Tự Động Định Tuyến Tối Hậu (Fallback Engine)")
+print_and_log("[START] Robot Vast.ai v1 - Bản Chuẩn Hóa Khớp 100% Web Search API")
 
 if not VAST_API_KEY or not AGENT_TOKEN:
     print_and_log("[❌] LỖI CẤU HÌNH: Thiếu VAST_API_KEY hoặc AGENT_TOKEN!")
@@ -56,7 +56,7 @@ if not VAST_API_KEY or not AGENT_TOKEN:
 
 
 # ==============================================================================
-# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI CHUẨN XÁC
+# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI
 # ==============================================================================
 def get_instances():
     try:
@@ -100,11 +100,8 @@ sleep infinity"""
 
 
 # ==============================================================================
-# PHẦN 3: VÒNG LẶP SĂN MÁY ĐA PHƯƠNG THỨC VÀ ĐA ENDPOINT
+# PHẦN 3: VÒNG LẶP SĂN MÁY CHUẨN ĐỊNH DẠNG WEB
 # ==============================================================================
-# Chuỗi lọc JSON phẳng mã hóa chuẩn để test
-encoded_q = "%7B%22verified%22%3Atrue%2C%22external%22%3Afalse%2C%22rentable%22%3Atrue%2C%22rented%22%3Afalse%7D"
-
 while True:
     instances = get_instances()
     ACTIVE_STATUS = {"running", "loading", "creating", "starting"}
@@ -138,103 +135,96 @@ while True:
             time.sleep(60)
         continue
 
-    print_and_log(f"[🔍] Bắt đầu chu kỳ quét thị trường thông minh...")
+    print_and_log(f"[🔍] Đang đồng bộ danh sách thị trường từ giao diện Search...")
     
-    # DANH SÁCH CÁC ĐƯỜNG ĐI CHIẾN LƯỢC SẼ ĐƯỢC THỬ NGHIỆM LIÊN TỤC
-    strategies = [
-        {"name": "GET /bundles (Dạng mới không dấu gạch chéo)", "method": "GET", "url": f"{BASE_URL}/bundles?q={encoded_q}&api_key={VAST_API_KEY}"},
-        {"name": "GET /bundles/ (Dạng có dấu gạch chéo)", "method": "GET", "url": f"{BASE_URL}/bundles/?q={encoded_q}&api_key={VAST_API_KEY}"},
-        {"name": "GET /asks (Cổng phân phối thô)", "method": "GET", "url": f"{BASE_URL}/asks?q={encoded_q}&api_key={VAST_API_KEY}"},
-        {"name": "GET /machines (Cổng phụ)", "method": "GET", "url": f"{BASE_URL}/machines?api_key={VAST_API_KEY}"}
-    ]
-    
-    offers = []
-    success_strategy_name = None
-    
-    for strg in strategies:
-        try:
-            print_and_log(f" 📡 Đang thử nghiệm chiến lược: {strg['name']}...")
-            if strg["method"] == "GET":
-                r = requests.get(strg["url"], headers=HEADERS, timeout=15)
-            
-            if r.status_code == 200:
-                res_data = r.json()
-                # Bóc tách mảng từ mọi cấu trúc key có thể có
-                if isinstance(res_data, dict):
-                    offers = res_data.get("offers", res_data.get("asks", res_data.get("machines", res_data.get("results", res_data.get("instances", [])))))
-                elif isinstance(res_data, list):
-                    offers = res_data
-                    
-                if offers and isinstance(offers, list):
-                    success_strategy_name = strg["name"]
-                    print_and_log(f" [🎯 SUCCESS] Kết nối thành công bằng chiến lược: {success_strategy_name}!")
-                    break
-            else:
-                print(f"   -> Thất bại (Mã phản hồi: {r.status_code})", flush=True)
-        except Exception as e:
-            print(f"   -> Lỗi kết nối ngoại lệ: {e}", flush=True)
-            
-    if not offers:
-        print_and_log("[⚠️] Toàn bộ chiến lược kết nối API đều thất bại hoặc thị trường trống rỗng. Thử lại sau 30 giây...")
-        time.sleep(30)
-        continue
-        
-    # SÀNG LỌC VÀ LỌC GIÁ BẰNG PYTHON ENGINE TẠI CLIENT
-    valid_offers = []
-    for o in offers:
-        if not isinstance(o, dict):
-            continue
-            
-        o_id = o.get("id", o.get("machine_id"))
-        if o_id is None:
-            continue
-            
-        price = float(o.get("dph_total", o.get("price", 999)))
-        gpu_name_str = str(o.get("gpu_name", ""))
-        
-        # Lọc chính xác máy RTX 3090 dựa vào chuỗi ký tự và giá tối đa
-        if "3090" in gpu_name_str and price <= MAX_PRICE:
-            valid_offers.append({
-                "id": o_id,
-                "gpu_name": gpu_name_str,
-                "price": price
-            })
-            
-    print_and_log(f"[📊] Kết quả xử lý: Tìm thấy {len(valid_offers)} máy RTX 3090 phù hợp với giá trần <= {MAX_PRICE}$")
-    
-    if not valid_offers:
-        time.sleep(30)
-        continue
-        
-    # Sắp xếp lấy máy có giá thành tối ưu nhất
-    valid_offers.sort(key=lambda x: x["price"])
-    best_machine = valid_offers[0]
-    
-    print_and_log(f"[🎯] CHỌN ĐƯỢC MÁY RẺ NHẤT: ID {best_machine['id']} - Tên: {best_machine['gpu_name']} - Giá {best_machine['price']}$/giờ. Tiến hành thuê...")
-    
-    rent_payload = {
-        "image": "nvidia/cuda:12.1.1-runtime-ubuntu22.04",
-        "disk": 40.0,
-        "runtype": "ssh_direct",
-        "onstart": create_onstart_script()
-    }
-    
-    # Thực hiện lệnh thuê máy POST trực tiếp
     try:
-        rent_resp = requests.post(
-            f"{BASE_URL}/asks/{best_machine['id']}/",
-            headers=HEADERS,
-            params={"api_key": VAST_API_KEY},
-            json=rent_payload,
-            timeout=60
+        # Sử dụng cấu trúc chuỗi phẳng thuần túy được Vast.ai Web chấp nhận 100%
+        # Tránh bọc cấu trúc lồng JSON để không bị báo lỗi 404/400
+        market_url = (
+            f"{BASE_URL}/bundles"
+            f"?verified=true"
+            f"&external=false"
+            f"&rentable=true"
+            f"&rented=false"
+            f"&api_key={VAST_API_KEY}"
         )
         
-        if rent_resp.status_code in (200, 201):
-            print_and_log(f"[🎉] THUÊ MÁY THÀNH CÔNG! Chờ máy thiết lập cài đặt...")
-            time.sleep(900)
+        r = requests.get(market_url, headers=HEADERS, timeout=25)
+        
+        if r.status_code == 200:
+            res_data = r.json()
+            
+            # Khai thác mảng kết quả trả về
+            offers = []
+            if isinstance(res_data, dict):
+                offers = res_data.get("offers", res_data.get("results", res_data.get("instances", [])))
+            elif isinstance(res_data, list):
+                offers = res_data
+                
+            if not offers:
+                print_and_log("[⚠️] Phản hồi thị trường trống. Đang chờ máy trống, quét lại sau 30 giây...")
+                time.sleep(30)
+                continue
+                
+            # SÀNG LỌC CHI TIẾT TẠI CLIENT
+            valid_offers = []
+            for o in offers:
+                if not isinstance(o, dict):
+                    continue
+                
+                o_id = o.get("id", o.get("machine_id"))
+                if o_id is None:
+                    continue
+                    
+                price = float(o.get("dph_total", o.get("price", 999)))
+                gpu_name_str = str(o.get("gpu_name", ""))
+                
+                # Bắt chính xác tên GPU và kiểm tra giá trần
+                if "3090" in gpu_name_str and price <= MAX_PRICE:
+                    valid_offers.append({
+                        "id": o_id,
+                        "gpu_name": gpu_name_str,
+                        "price": price
+                    })
+                    
+            print_and_log(f"[📊] Tìm thấy {len(valid_offers)} máy RTX 3090 thỏa mãn giá <= {MAX_PRICE}$")
+            
+            if not valid_offers:
+                time.sleep(30)
+                continue
+                
+            # Sắp xếp chọn máy có giá thành tốt nhất
+            valid_offers.sort(key=lambda x: x["price"])
+            best_machine = valid_offers[0]
+            
+            print_and_log(f"[🎯] CHỌN ĐƯỢC MÁY RẺ NHẤT: ID {best_machine['id']} - Tên: {best_machine['gpu_name']} - Giá {best_machine['price']}$/giờ. Tiến hành thuê...")
+            
+            rent_payload = {
+                "image": "nvidia/cuda:12.1.1-runtime-ubuntu22.04",
+                "disk": 40.0,
+                "runtype": "ssh_direct",
+                "onstart": create_onstart_script()
+            }
+            
+            # Gửi lệnh đặt thuê máy (POST /asks/{id}/)
+            rent_resp = requests.post(
+                f"{BASE_URL}/asks/{best_machine['id']}/",
+                headers=HEADERS,
+                params={"api_key": VAST_API_KEY},
+                json=rent_payload,
+                timeout=60
+            )
+            
+            if rent_resp.status_code in (200, 201):
+                print_and_log(f"[🎉] THUÊ MÁY THÀNH CÔNG! Chờ máy khởi động...")
+                time.sleep(900)
+            else:
+                print_and_log(f"[❌] Lỗi khi gửi lệnh thuê máy (Mã: {rent_resp.status_code}): {rent_resp.text}")
+                time.sleep(20)
         else:
-            print_and_log(f"[❌] Lỗi khi gửi lệnh thuê máy (Mã: {rent_resp.status_code}): {rent_resp.text}")
-            time.sleep(20)
+            print_and_log(f"[❌ LỖI] API không phản hồi chuẩn (Mã: {r.status_code}). Nội dung: {r.text}")
+            time.sleep(30)
+            
     except Exception as e:
-        print_and_log(f"[ERROR] Ngoại lệ luồng thuê máy: {e}")
-        time.sleep(20)
+        print_and_log(f"[ERROR] Lỗi luồng hệ thống: {e}")
+        time.sleep(30)
