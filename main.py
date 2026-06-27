@@ -53,7 +53,7 @@ def log_api_error(action_name, response):
     print(f"  -> Nội dung phản hồi: {response.text}", flush=True)
     print("-" * 60, flush=True)
 
-print_and_log("[START] Robot Vast.ai v1 - Sửa Lỗi Cú Pháp Bộ Lọc Phẳng")
+print_and_log("[START] Robot Vast.ai v1 - Bản Fix 100% Client-Side Filter")
 
 if not VAST_API_KEY or not AGENT_TOKEN:
     print_and_log("[❌] LỖI CẤU HÌNH: Thiếu VAST_API_KEY hoặc AGENT_TOKEN!")
@@ -111,7 +111,7 @@ sleep infinity"""
 
 
 # ==============================================================================
-# PHẦN 3: VÒNG LẶP QUÉT THỊ TRƯỜNG VÀ ĐẶT THUÊ MÁY
+# PHẦN 3: VÒNG LẶP QUÉT THỊ TRƯỜNG KHÔNG DÙNG PARAM 'Q'
 # ==============================================================================
 while True:
     instances = get_instances()
@@ -146,58 +146,53 @@ while True:
             time.sleep(60)
         continue
 
-    print_and_log(f"[🔍] Đang quét tìm máy RTX 3090 giá rẻ công khai trên thị trường...")
-    
-    # THAY ĐỔI QUYẾT ĐỊNH: Làm phẳng cấu trúc query, loại bỏ hoàn toàn toán tử lòng vòng nhằm pass Validator của Server
-    query_filter = {
-        "verified": True,
-        "external": False,
-        "rentable": True,
-        "rented": False,
-        "gpu_name": "GeForce RTX 3090"
-    }
+    print_and_log(f"[🔍] Đang lấy toàn bộ danh sách thị trường từ Vast.ai (Lọc bằng Python)...")
     
     try:
-        # Thực hiện gọi endpoint thị trường với chuỗi JSON phẳng sạch sẽ
+        # GIẢI PHÁP TRIỆT ĐỂ: Không truyền bất cứ tham số 'q' nào để tránh lỗi 400 Validator.
+        # Chỉ truyền api_key để lấy danh sách máy thô từ market.
         r = requests.get(
             f"{BASE_URL}/machines/",
             headers=HEADERS,
-            params={
-                "q": json.dumps(query_filter),
-                "api_key": VAST_API_KEY
-            },
-            timeout=25
+            params={"api_key": VAST_API_KEY},
+            timeout=30
         )
         
         if r.status_code == 200:
             res_data = r.json()
             
-            # Trích xuất danh sách máy
-            offers = res_data.get("machines", res_data.get("instances", res_data.get("results", [])))
-            if not isinstance(offers, list) and isinstance(res_data, list):
+            # Khai thác danh sách máy từ mọi key có thể có trong cấu trúc JSON phản hồi
+            offers = []
+            if isinstance(res_data, dict):
+                offers = res_data.get("machines", res_data.get("instances", res_data.get("offers", res_data.get("results", []))))
+            elif isinstance(res_data, list):
                 offers = res_data
                 
-            if not offers:
-                print_and_log("[⚠️] Thị trường tạm thời trống hoặc trả về rỗng. Thử lại sau 30 giây...")
+            if not offers or not isinstance(offers, list):
+                print_and_log("[⚠️] Phản hồi thị trường trống hoặc sai cấu trúc mảng. Thử lại sau 30 giây...")
                 time.sleep(30)
                 continue
-                
-            # Phân tách và lọc máy ở phía Client (Python) để đảm bảo độ chính xác tuyệt đối
+            
+            # SÀNG LỌC THỦ CÔNG BẰNG PYTHON ENGINE (Client-side)
             valid_offers = []
             for o in offers:
                 if not isinstance(o, dict):
                     continue
                 
-                # Ưu tiên lấy ID máy / ID chào thuê công khai
+                # Bỏ qua các máy đã bị thuê hoặc không có trạng thái sẵn sàng thuê công khai
+                if o.get("rented") is True or o.get("rentable") is False:
+                    continue
+                    
+                # Trích xuất ID gói thuê
                 o_id = o.get("id", o.get("machine_id"))
                 if o_id is None:
                     continue
                     
-                # Lấy giá trị dph_total (Dollar Per Hour) hoặc trường giá mặc định
-                price = float(o.get("dph_total", o.get("price", 999)))
+                # Kiểm tra tên GPU và giá tiền thuê theo giờ
                 gpu_name_str = str(o.get("gpu_name", ""))
+                price = float(o.get("dph_total", o.get("price", 999)))
                 
-                # Lọc thủ công: Phải chứa cụm từ 3090 và giá thuê nhỏ hơn hoặc bằng giới hạn MAX_PRICE
+                # Điều kiện kiểm tra chính xác: Phải có cụm "3090" và giá thuê rẻ hơn hoặc bằng MAX_PRICE
                 if "3090" in gpu_name_str and price <= MAX_PRICE:
                     valid_offers.append({
                         "id": o_id,
@@ -205,18 +200,18 @@ while True:
                         "price": price
                     })
             
-            print_and_log(f"[📊] Kết quả: Tìm thấy {len(valid_offers)} máy RTX 3090 thỏa mãn giá <= {MAX_PRICE}$")
+            print_and_log(f"[📊] Đã lọc xong: Tìm thấy tổng cộng {len(valid_offers)} máy RTX 3090 phù hợp với mức giá <= {MAX_PRICE}$")
             
             if not valid_offers:
-                print_and_log(f"[⚠️] Không có máy nào dưới ngưỡng {MAX_PRICE}$. Tiếp tục đợi quét vòng sau...")
+                print_and_log(f"[⚠️] Hiện không có máy RTX 3090 nào dưới ngưỡng {MAX_PRICE}$. Tiếp tục đợi chu kỳ sau...")
                 time.sleep(30)
                 continue
                 
-            # Sắp xếp để chọn ra máy có chi phí tối ưu nhất
+            # Sắp xếp danh sách máy tìm được để lấy ra máy có chi phí rẻ nhất ưu tiên thuê trước
             valid_offers.sort(key=lambda x: x["price"])
             best_machine = valid_offers[0]
             
-            print_and_log(f"[🎯] CHỌN ĐƯỢC MÁY RẺ NHẤT: ID {best_machine['id']} - Giá {best_machine['price']}$/giờ. Tiến hành thuê...")
+            print_and_log(f"[🎯] CHỌN ĐƯỢC MÁY RẺ NHẤT: ID {best_machine['id']} - Tên: {best_machine['gpu_name']} - Giá {best_machine['price']}$/giờ. Tiến hành thuê...")
             
             rent_payload = {
                 "image": "nvidia/cuda:12.1.1-runtime-ubuntu22.04",
@@ -225,7 +220,7 @@ while True:
                 "onstart": create_onstart_script()
             }
             
-            # Thực hiện đặt lệnh thuê máy
+            # Gửi lệnh đặt thuê máy (POST /asks/{id}/)
             rent_resp = requests.post(
                 f"{BASE_URL}/asks/{best_machine['id']}/",
                 headers=HEADERS,
@@ -235,15 +230,15 @@ while True:
             )
             
             if rent_resp.status_code in (200, 201):
-                print_and_log(f"[🎉] THUÊ MÁY THÀNH CÔNG! Chờ máy thiết lập cài đặt trong 15 phút...")
+                print_and_log(f"[🎉] THUÊ MÁY THÀNH CÔNG! Chờ máy khởi động và chạy script setup...")
                 time.sleep(900)
             else:
                 log_api_error("LỆNH THUÊ MÁY (POST /asks/)", rent_resp)
                 time.sleep(20)
         else:
-            log_api_error("QUÉT THỊ TRƯỜNG (/machines/)", r)
+            log_api_error("TẢI DANH SÁCH THỊ TRƯỜNG THÔ (/machines/)", r)
             time.sleep(30)
             
     except Exception as e:
-        print_and_log(f"[ERROR] Lỗi luồng hệ thống: {e}")
+        print_and_log(f"[ERROR] Lỗi đột xuất trong luồng xử lý: {e}")
         time.sleep(30)
