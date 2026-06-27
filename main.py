@@ -11,19 +11,20 @@ import uvicorn
 # ==============================================================================
 app = FastAPI()
 
+# Biến toàn cục để lưu trạng thái log mới nhất hiển thị lên giao diện Web
+SYSTEM_STATUS = "Robot vừa khởi động, đang chuẩn bị quét..."
+
 @app.get("/")
 def read_root():
     return {
         "status": "active",
-        "message": "Robot Vast.ai dang chay ngam on dinh",
+        "robot_log": SYSTEM_STATUS,
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
     }
 
 def run_web_server():
-    # Hugging Face yêu cầu ứng dụng phải lắng nghe chính xác tại cổng 7860
     uvicorn.run(app, host="0.0.0.0", port=7860, log_level="warning")
 
-# Khởi chạy máy chủ web trong một luồng phụ tách biệt (Thread) để không chặn vòng lặp thuê máy
 threading.Thread(target=run_web_server, daemon=True).start()
 
 
@@ -33,17 +34,14 @@ AGENT_TOKEN = os.getenv("AGENT_TOKEN", "rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3")
 MAX_PRICE = 0.25
 MAX_INSTANCES = 1
 
-# ====================== TÁCH BIẾN ĐƯỜNG DẪN GITHUB XEM WEB ======================
 GITHUB_HOST = "https://github.com"
 GITHUB_PATH = "/0hieutrung0-eng/Robot-vastai/tree/main"
 GITHUB_REPO = GITHUB_HOST + GITHUB_PATH
 
-# ====================== TÁCH BIẾN ĐƯỜNG DẪN GITHUB TẢI FILE (.GIT) ======================
 GITHUB_DOWNLOAD_HOST = "https://github.com"
 GITHUB_DOWNLOAD_PATH = "/0hieutrung0-eng/Robot-vastai.git"
 GITHUB_DOWNLOAD_URL = GITHUB_DOWNLOAD_HOST + GITHUB_DOWNLOAD_PATH
 
-# ====================== TÁCH BIẾN BASE URL VAST.AI (ĐỒNG BỘ API V1) ======================
 VAST_HOST = "https://vast.ai"
 VAST_PATH = "/api/v1"
 BASE_URL = VAST_HOST + VAST_PATH
@@ -53,37 +51,45 @@ HEADERS = {
     "Accept": "application/json"
 }
 
-print("[START] Robot Vast.ai - Khởi động giữ duy nhất 1 GPU chạy ngầm vĩnh viễn")
-print(f"[INFO] Kho mã nguồn mục tiêu: {GITHUB_REPO}")
+def print_and_log(msg):
+    global SYSTEM_STATUS
+    SYSTEM_STATUS = msg
+    print(msg, flush=True) # Ép hiển thị ra tab Container Log ngay lập tức
+
+print_and_log("[START] Robot Vast.ai - Khởi động giữ duy nhất 1 GPU chạy ngầm vĩnh viễn")
+print_and_log(f"[INFO] Kho mã nguồn mục tiêu: {GITHUB_REPO}")
 
 if not VAST_API_KEY:
-    print("[CRITICAL] CANH BAO: VAST_API_KEY dang bi trong! He thong co the bi lap loi.")
+    print_and_log("[CRITICAL] CANH BAO: VAST_API_KEY dang bi trong!")
 
 
 # ==============================================================================
-# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI (ĐÃ SỬA LỖI JSON VÀ ĐƯỜNG DẪN)
+# PHẦN 2: CÁC HÀM XỬ LÝ KẾT NỐI API VAST.AI
 # ==============================================================================
 def get_instances():
     try:
-        # Gửi request lên API lấy danh sách máy đang thuê
+        print_and_log("[📡] Đang gửi yêu cầu lấy danh sách máy từ Vast.ai...")
         r = requests.get(f"{BASE_URL}/instances", headers=HEADERS, timeout=20)
         
+        print_and_log(f"[📡] Kết nối thành công! Mã phản hồi từ Vast.ai: HTTP {r.status_code}")
+        
         if r.status_code != 200:
-            print(f"[❌] Vast.ai tu choi ket noi (HTTP {r.status_code}): {r.text[:200]}")
+            print_and_log(f"[❌] Vast.ai từ chối kết nối (HTTP {r.status_code}): {r.text[:200]}")
             return []
             
         try:
-            return r.json().get("instances", [])
+            instances_list = r.json().get("instances", [])
+            print_and_log(f"[📊] Đã nhận dữ liệu JSON. Tìm thấy tổng cộng: {len(instances_list)} máy trên tài khoản.")
+            return instances_list
         except ValueError:
-            print(f"[❌] API tra ve text chu khong phai JSON. Noi dung: {r.text[:200]}")
+            print_and_log(f"[❌] API trả về Text/HTML chứ không phải JSON hợp lệ. Nội dung: {r.text[:200]}")
             return []
             
     except Exception as e:
-        print(f"[ERROR] Khong the ket noi den Vast.ai: {e}")
+        print_and_log(f"[ERROR] Không thể kết nối đến đối tượng Vast.ai: {e}")
         return []
 
 def create_onstart_script():
-    # Sử dụng AGENT_TOKEN chèn trực tiếp vào đường dẫn tải về để máy GPU có quyền clone kho private
     AUTHENTICATED_URL = f"https://{AGENT_TOKEN}@github.com{GITHUB_DOWNLOAD_PATH}"
     return f"""#!/bin/bash
 echo "=== Agent OnStart Started - $(date) ===" > /root/agent.log
@@ -112,7 +118,7 @@ while True:
     instances = get_instances()
     ACTIVE_STATUS = {"running", "loading", "creating", "starting"}
     running_count = sum(1 for inst in instances if str(inst.get("status", "")).lower() in ACTIVE_STATUS)
-    print(f"[CHECK] Running: {running_count} | Total: {len(instances)}")
+    print_and_log(f"[CHECK] Đang hoạt động: {running_count} | Tổng số máy: {len(instances)}")
     
     valid_kept = 0
     for inst in instances:
@@ -121,22 +127,24 @@ while True:
         gpu_name = inst.get("gpu_name", "Unknown")
         
         if status in ["error", "dead", "stopped", "failed"]:
-            print(f" 🗑️ Xoa may gap loi: {gpu_name} (ID: {inst_id})")
+            print_and_log(f" 🗑️ Phát hiện máy lỗi -> Tiến hành xóa: {gpu_name} (ID: {inst_id})")
             requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS, timeout=15)
             time.sleep(8)
         elif status in ACTIVE_STATUS:
             valid_kept += 1
             if valid_kept > MAX_INSTANCES:
-                print(f" 🗑️ Xoa may du thua: {gpu_name} (ID: {inst_id})")
+                print_and_log(f" 🗑️ Phát hiện máy dư thừa -> Tiến hành xóa máy thừa: {gpu_name} (ID: {inst_id})")
                 requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=HEADERS, timeout=15)
                 time.sleep(8)
                 
     if valid_kept >= MAX_INSTANCES:
-        print(f"[✅] Da co {valid_kept} may hoat dong on dinh -> Nghi giu luong 8 phut")
-        time.sleep(480)
+        print_and_log(f"[✅] Đã có {valid_kept} máy hoạt động ổn định (Đạt tối đa) -> Nghỉ giữ luồng 8 phút...")
+        for minute in range(8, 0, -1):
+            print_and_log(f"[💤] Đang trong thời gian nghỉ. Sẽ quét lại sau {minute} phút...")
+            time.sleep(60)
         continue
 
-    print("[🔍] Chuyen sang quet tim may RTX 3090 series thich hop...")
+    print_and_log(f"[🔍] Số máy hoạt động ({valid_kept}) thấp hơn chỉ tiêu ({MAX_INSTANCES}). Tiến hành quét thị trường tìm RTX 3090...")
     query_filter = {
         "rentable": {"eq": True},
         "rented": {"eq": False},
@@ -145,20 +153,22 @@ while True:
     }
     
     try:
+        print_and_log("[📡] Đang gửi bộ lọc tìm kiếm máy giá rẻ lên thị trường Vast.ai...")
         r = requests.get(f"{BASE_URL}/bundles", headers=HEADERS, params={"q": json.dumps(query_filter)}, timeout=20)
         
         if r.status_code == 200:
             try:
                 res_data = r.json()
             except ValueError:
-                print(f"[❌] Du lieu bundles lay ve bi loi JSON. Noi dung: {r.text[:200]}")
+                print_and_log(f"[❌] Dữ liệu thị trường lấy về bị lỗi cấu trúc JSON. Nội dung: {r.text[:200]}")
                 time.sleep(40)
                 continue
                 
             offers = res_data.get("offers", res_data.get("results", []))
+            print_and_log(f"[📊] Kết quả tìm kiếm: Tìm thấy {len(offers)} máy thỏa mãn tiêu chuẩn (RTX 3090 & Giá <= {MAX_PRICE}$)")
             
             if not offers:
-                print(f"[⚠️] Khong tim thay may nao dat tieu chi gia duoi {MAX_PRICE}$. Quet lai sau 40 giay...")
+                print_and_log(f"[⚠️] Không có máy RTX 3090 nào giá rẻ hơn {MAX_PRICE}$ xuất hiện. Chờ 40 giây để quét lại...")
                 time.sleep(40)
                 continue
                 
@@ -166,7 +176,8 @@ while True:
             best = offers.pop(0)
             offer_id = best["id"]
             gpu = best.get("gpu_name", "Unknown")
-            print(f"[🎯] Phat hien {gpu} voi gia cuc tot {best.get('dph_total')}$ -> Dang gui lenh thue...")
+            price = best.get("dph_total")
+            print_and_log(f"[🎯] ĐÃ TÌM THẤY MÁY TỐT NHẤT: {gpu} giá {price}$/giờ! Đang gửi lệnh THUÊ NGAY...")
             
             rent_payload = {
                 "image": "nvidia/cuda:12.1.1-runtime-ubuntu22.04",
@@ -177,14 +188,14 @@ while True:
             
             rent_resp = requests.put(f"{BASE_URL}/instances/{offer_id}/", headers=HEADERS, json=rent_payload, timeout=90)
             if rent_resp.status_code in (200, 201):
-                print(f"[🎉] TIẾN TRÌNH THUÊ THÀNH CÔNG MÁY {gpu}!")
+                print_and_log(f"[🎉] XÁC NHẬN: THUÊ THÀNH CÔNG MÁY {gpu}! Hệ thống sẽ tạm nghỉ 15 phút để máy khởi động...")
                 time.sleep(900)
             else:
-                print(f"[❌] Yeu cau thue that bai. Thong tin phan hoi (HTTP {rent_resp.status_code}): {rent_resp.text}")
+                print_and_log(f"[❌] Lệnh thuê bị Vast.ai từ chối (HTTP {rent_resp.status_code}): {rent_resp.text}")
                 time.sleep(30)
         else:
-            print(f"[❌] May chu lay thong tin bundles bao loi (HTTP {r.status_code}): {r.text[:200]}")
+            print_and_log(f"[❌] Lấy dữ liệu thị trường thất bại (HTTP {r.status_code}): {r.text[:200]}")
             time.sleep(40)
     except Exception as e:
-        print(f"[ERROR] He thong phat sinh loi ngoai le: {e}")
+        print_and_log(f"[ERROR] Hệ thống phát sinh lỗi ngoại lệ trong quá trình quét: {e}")
         time.sleep(40)
