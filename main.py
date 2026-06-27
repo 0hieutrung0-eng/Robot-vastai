@@ -5,7 +5,6 @@ import threading
 from fastapi import FastAPI
 import uvicorn
 
-# ====================== FASTAPI ======================
 app = FastAPI()
 SYSTEM_STATUS = "Robot đang khởi động..."
 
@@ -30,7 +29,7 @@ MAX_PRICE = 0.25
 MAX_INSTANCES = 1
 GITHUB_REPO = "/0hieutrung0-eng/Robot-vastai.git"
 
-BASE_URL = "https://console.vast.ai/api/v1"   # ← ĐÃ SỬA THÀNH v1
+BASE_URL = "https://console.vast.ai/api/v1"
 
 def get_auth_headers():
     return {
@@ -47,10 +46,9 @@ def print_and_log(msg):
 
 if not VAST_API_KEY or not AGENT_TOKEN:
     print_and_log("[❌] Thiếu VAST_API_KEY hoặc AGENT_TOKEN!")
-    while True:
-        time.sleep(3600)
+    while True: time.sleep(3600)
 
-# ========================== ONSTART SCRIPT ==========================
+# ========================== ONSTART ==========================
 def create_onstart_script():
     AUTH_URL = f"https://{AGENT_TOKEN}@github.com{GITHUB_REPO}"
     return f"""#!/bin/bash
@@ -76,16 +74,8 @@ sleep infinity
 # ========================== API HELPERS ==========================
 def get_my_instances():
     try:
-        r = requests.get(
-            f"{BASE_URL}/instances/?owner=me",
-            headers=get_auth_headers(),
-            timeout=20
-        )
-        if r.status_code == 200:
-            return r.json().get("instances", [])
-        else:
-            print_and_log(f"[WARN] get_my_instances: {r.status_code}")
-            return []
+        r = requests.get(f"{BASE_URL}/instances/?owner=me", headers=get_auth_headers(), timeout=20)
+        return r.json().get("instances", []) if r.status_code == 200 else []
     except Exception as e:
         print_and_log(f"[ERROR] get_my_instances: {e}")
         return []
@@ -99,71 +89,66 @@ def search_offers():
         "type": {"eq": "on-demand"},
         "limit": 10
     }
-    try:
-        r = requests.post(
-            f"{BASE_URL}/bundles/",          # thử /bundles/ trước
-            headers=get_auth_headers(),
-            json=query,
-            timeout=25
-        )
-        print_and_log(f"[DEBUG] Search status: {r.status_code}")
-        
-        if r.status_code == 200:
-            offers = r.json().get("offers", [])
-            print_and_log(f"[📊] Tìm thấy {len(offers)} offer phù hợp")
-            return offers
-        else:
-            print_and_log(f"[❌] Search failed {r.status_code} - {r.text[:400]}")
-            return []
-    except Exception as e:
-        print_and_log(f"[ERROR] search_offers: {e}")
-        return []
+    
+    endpoints = [
+        f"{BASE_URL}/bundles/",
+        f"{BASE_URL}/offers/search/",
+        f"{BASE_URL}/instances/query/",
+        f"{BASE_URL}/asks/search/"
+    ]
+    
+    for endpoint in endpoints:
+        try:
+            print_and_log(f"[TRY] Testing endpoint: {endpoint.split('/')[-2]}")
+            r = requests.post(endpoint, headers=get_auth_headers(), json=query, timeout=20)
+            print_and_log(f"[DEBUG] {endpoint} → Status: {r.status_code}")
+            
+            if r.status_code == 200:
+                data = r.json()
+                offers = data.get("offers") or data.get("instances") or data.get("results") or []
+                print_and_log(f"[✅] Tìm thấy {len(offers)} offer!")
+                return offers
+            elif r.status_code == 404:
+                continue
+            else:
+                print_and_log(f"Response: {r.text[:300]}")
+        except Exception as e:
+            print_and_log(f"[ERROR] {endpoint}: {e}")
+    
+    print_and_log("[❌] Không tìm thấy endpoint search nào hợp lệ")
+    return []
 
 # ========================== MAIN LOOP ==========================
-print_and_log("[🚀] Robot Vast.ai v2.3 - API v1")
-
-# Test API Key
-try:
-    test_r = requests.get(f"{BASE_URL}/instances/?owner=me", headers=get_auth_headers(), timeout=10)
-    print_and_log(f"[TEST] API Key status: {test_r.status_code}")
-    if test_r.status_code != 200:
-        print_and_log(f"Response: {test_r.text[:300]}")
-except Exception as e:
-    print_and_log(f"[TEST] Lỗi: {e}")
+print_and_log("[🚀] Robot Vast.ai v2.4 - Tìm endpoint")
 
 while True:
     instances = get_my_instances()
-    active_count = sum(1 for inst in instances
-                      if inst.get("status") in ["running", "loading", "creating", "starting"])
+    active_count = sum(1 for inst in instances if inst.get("status") in ["running", "loading", "creating", "starting"])
     
     print_and_log(f"[CHECK] Đang hoạt động: {active_count}/{MAX_INSTANCES}")
 
+    # Cleanup
     for inst in instances:
-        status = str(inst.get("status", "")).lower()
-        inst_id = inst.get("id")
-        if status in ["error", "dead", "stopped", "failed"]:
+        if str(inst.get("status", "")).lower() in ["error", "dead", "stopped", "failed"]:
+            inst_id = inst.get("id")
             print_and_log(f"🗑️ Xóa máy lỗi ID: {inst_id}")
-            try:
-                requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=get_auth_headers())
-            except:
-                pass
+            requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=get_auth_headers())
             time.sleep(8)
 
     if active_count >= MAX_INSTANCES:
-        print_and_log("[✅] Đủ máy, nghỉ 8 phút...")
         time.sleep(480)
         continue
 
     offers = search_offers()
     if not offers:
-        time.sleep(30)
+        time.sleep(40)
         continue
 
     offers.sort(key=lambda x: float(x.get("dph_total", 999)))
     best = offers[0]
     price = float(best.get("dph_total", 0))
 
-    print_and_log(f"[🎯] Thuê máy: {best.get('gpu_name')} - ${price}/h")
+    print_and_log(f"[🎯] Thuê: {best.get('gpu_name')} - ${price}/h")
 
     rent_payload = {
         "image": "nvidia/cuda:12.4.1-runtime-ubuntu22.04",
@@ -182,9 +167,8 @@ while True:
     )
 
     if rent_resp.status_code in (200, 201):
-        print_and_log(f"[🎉] THUÊ THÀNH CÔNG!")
+        print_and_log("[🎉] THUÊ THÀNH CÔNG!")
         time.sleep(900)
     else:
-        print_and_log(f"[❌] Thuê thất bại: {rent_resp.status_code}")
-        print(rent_resp.text[:400] if hasattr(rent_resp, 'text') else "")
+        print_and_log(f"[❌] Thuê thất bại {rent_resp.status_code}")
         time.sleep(30)
