@@ -30,7 +30,7 @@ MAX_PRICE = 0.25
 MAX_INSTANCES = 1
 GITHUB_REPO = "/0hieutrung0-eng/Robot-vastai.git"
 
-BASE_URL = "https://console.vast.ai/api/v0"
+BASE_URL = "https://console.vast.ai/api/v1"   # ← ĐÃ SỬA THÀNH v1
 
 def get_auth_headers():
     return {
@@ -101,7 +101,7 @@ def search_offers():
     }
     try:
         r = requests.post(
-            f"{BASE_URL}/bundles/",
+            f"{BASE_URL}/bundles/",          # thử /bundles/ trước
             headers=get_auth_headers(),
             json=query,
             timeout=25
@@ -120,16 +120,16 @@ def search_offers():
         return []
 
 # ========================== MAIN LOOP ==========================
-print_and_log("[🚀] Robot Vast.ai v2.2 - Đang chạy")
+print_and_log("[🚀] Robot Vast.ai v2.3 - API v1")
 
 # Test API Key
 try:
     test_r = requests.get(f"{BASE_URL}/instances/?owner=me", headers=get_auth_headers(), timeout=10)
     print_and_log(f"[TEST] API Key status: {test_r.status_code}")
     if test_r.status_code != 200:
-        print_and_log(f"[⚠️] Response: {test_r.text[:300]}")
+        print_and_log(f"Response: {test_r.text[:300]}")
 except Exception as e:
-    print_and_log(f"[TEST] Lỗi kiểm tra API Key: {e}")
+    print_and_log(f"[TEST] Lỗi: {e}")
 
 while True:
     instances = get_my_instances()
@@ -138,17 +138,13 @@ while True:
     
     print_and_log(f"[CHECK] Đang hoạt động: {active_count}/{MAX_INSTANCES}")
 
-    # Cleanup máy lỗi
     for inst in instances:
         status = str(inst.get("status", "")).lower()
         inst_id = inst.get("id")
         if status in ["error", "dead", "stopped", "failed"]:
-            print_and_log(f"🗑️ Xóa máy lỗi: {inst.get('gpu_name')} (ID: {inst_id})")
+            print_and_log(f"🗑️ Xóa máy lỗi ID: {inst_id}")
             try:
-                requests.delete(
-                    f"{BASE_URL}/instances/{inst_id}/",
-                    headers=get_auth_headers()
-                )
+                requests.delete(f"{BASE_URL}/instances/{inst_id}/", headers=get_auth_headers())
             except:
                 pass
             time.sleep(8)
@@ -167,7 +163,7 @@ while True:
     best = offers[0]
     price = float(best.get("dph_total", 0))
 
-    print_and_log(f"[🎯] Thuê máy: {best.get('gpu_name')} - ${price}/h (ID: {best.get('id')})")
+    print_and_log(f"[🎯] Thuê máy: {best.get('gpu_name')} - ${price}/h")
 
     rent_payload = {
         "image": "nvidia/cuda:12.4.1-runtime-ubuntu22.04",
@@ -186,9 +182,9 @@ while True:
     )
 
     if rent_resp.status_code in (200, 201):
-        print_and_log(f"[🎉] THUÊ THÀNH CÔNG! Chờ 15 phút boot...")
+        print_and_log(f"[🎉] THUÊ THÀNH CÔNG!")
         time.sleep(900)
     else:
         print_and_log(f"[❌] Thuê thất bại: {rent_resp.status_code}")
-        print(rent_resp.text[:400] if hasattr(rent_resp, 'text') else "No response text")
+        print(rent_resp.text[:400] if hasattr(rent_resp, 'text') else "")
         time.sleep(30)
