@@ -27,8 +27,7 @@ def run_web_server():
 threading.Thread(target=run_web_server, daemon=True).start()
 
 
-# ====================== CẤU HÌNH ĐÃ NẠP MÃ KEY MỚI CỦA BẠN ======================
-# Đã thay đổi chính xác mã VAST_API_KEY mới bạn vừa gửi qua hình ảnh
+# ====================== CẤU HÌNH HỆ THỐNG VÀ KEY XÁC THỰC ======================
 VAST_API_KEY = os.getenv("VAST_API_KEY", "059fe4f97a115c4d837ffe2e60a9505660146f398efdfe3a8da1ca86c2f803f3").strip()
 AGENT_TOKEN = os.getenv("AGENT_TOKEN", "rayon_omRkJmRpmrtrZhAySsjpSsQfu1PKXcN3").strip()
 MAX_PRICE = 0.25
@@ -46,8 +45,10 @@ VAST_HOST = "https://vast.ai"
 VAST_PATH = "/api/v0"
 BASE_URL = VAST_HOST + VAST_PATH
 
+# Đã chuẩn hóa viết hoa token và Content-Type cấu trúc header xác thực
 HEADERS = {
     "Authorization": f"Bearer {VAST_API_KEY}",
+    "Content-Type": "application/json",
     "Accept": "application/json"
 }
 
@@ -69,19 +70,19 @@ def get_instances():
         r = requests.get(f"{BASE_URL}/instances/", headers=HEADERS, timeout=20)
         
         if r.status_code != 200:
-            print_and_log(f"[❌] Vast.ai từ chối kết nối (HTTP {r.status_code}): {r.text[:200]}")
+            print_and_log(f"[❌] Lấy danh sách máy thất bại (HTTP {r.status_code}): {r.text[:200]}")
             return []
             
         try:
             instances_list = r.json().get("instances", [])
-            print_and_log(f"[📊] Đã nhận dữ liệu JSON. Tìm thấy tổng cộng: {len(instances_list)} máy trên tài khoản.")
+            print_and_log(f"[📊] Tìm thấy tổng cộng: {len(instances_list)} máy trên tài khoản.")
             return instances_list
         except ValueError:
-            print_and_log(f"[❌] API trả về Text/HTML chứ không phải JSON hợp lệ. Nội dung: {r.text[:200]}")
+            print_and_log(f"[❌] API trả về dữ liệu không hợp lệ. Nội dung: {r.text[:200]}")
             return []
             
     except Exception as e:
-        print_and_log(f"[ERROR] Không thể kết nối đến đối tượng Vast.ai: {e}")
+        print_and_log(f"[ERROR] Không thể kết nối đến Vast.ai: {e}")
         return []
 
 def create_onstart_script():
@@ -93,9 +94,9 @@ git config --global credential.helper ''
 git config --global --add safe.directory /app
 rm -rf /app
 if git clone --depth 1 {AUTHENTICATED_URL} /app; then
-    echo "→ Clone thanh cong" >> /root/agent.log
+    echo "→ Clone thành công" >> /root/agent.log
 else
-    echo "→ Clone that bai (Kiem tra token quyen truy cap)" >> /root/agent.log
+    echo "→ Clone thất bại" >> /root/agent.log
 fi
 cd /app
 if [ -f "requirements.txt" ]; then
@@ -133,15 +134,13 @@ while True:
                 time.sleep(8)
                 
     if valid_kept >= MAX_INSTANCES:
-        print_and_log(f"[✅] Đã có {valid_kept} máy hoạt động ổn định (Đạt tối đa) -> Nghỉ giữ luồng 8 phút...")
+        print_and_log(f"[✅] Đã có {valid_kept} máy hoạt động ổn định -> Nghỉ giữ luồng 8 phút...")
         for minute in range(8, 0, -1):
             print_and_log(f"[💤] Đang trong thời gian nghỉ. Sẽ quét lại sau {minute} phút...")
             time.sleep(60)
         continue
 
-    print_and_log(f"[🔍] Số máy hoạt động ({valid_kept}) thấp hơn chỉ tiêu ({MAX_INSTANCES}). Tiến hành quét thị trường tìm RTX 3090...")
-    
-    # Sửa đổi cấu trúc lọc chuỗi chính xác tương thích 100% quy chuẩn API Vast.ai
+    print_and_log(f"[🔍] Số máy hoạt động ({valid_kept}) thấp hơn chỉ tiêu ({MAX_INSTANCES}). Tiến hành quét tìm RTX 3090...")
     query_filter = {
         "rentable": {"eq": True},
         "rented": {"eq": False},
@@ -157,15 +156,15 @@ while True:
             try:
                 res_data = r.json()
             except ValueError:
-                print_and_log(f"[❌] Dữ liệu thị trường lấy về bị lỗi cấu trúc JSON. Nội dung: {r.text[:200]}")
+                print_and_log(f"[❌] Dữ liệu thị trường lấy về bị lỗi JSON. Nội dung: {r.text[:200]}")
                 time.sleep(40)
                 continue
                 
             offers = res_data.get("offers", res_data.get("results", []))
-            print_and_log(f"[📊] Kết quả tìm kiếm: Tìm thấy {len(offers)} máy thỏa mãn tiêu chuẩn (RTX 3090 & Giá <= {MAX_PRICE}$)")
+            print_and_log(f"[📊] Kết quả tìm kiếm: Tìm thấy {len(offers)} máy thỏa mãn tiêu chuẩn (RTX 3090)")
             
             if not offers:
-                print_and_log(f"[⚠️] Không có máy RTX 3090 nào giá rẻ hơn {MAX_PRICE}$ xuất hiện. Chờ 40 giây để quét lại...")
+                print_and_log(f"[⚠️] Không có máy RTX 3090 nào giá rẻ hơn {MAX_PRICE}$. Quét lại sau 40 giây...")
                 time.sleep(40)
                 continue
                 
@@ -183,16 +182,18 @@ while True:
                 "onstart": create_onstart_script()
             }
             
-            rent_resp = requests.put(f"{BASE_URL}/instances/{offer_id}/", headers=HEADERS, json=rent_payload, timeout=90)
+            # === ĐÃ SỬA: Chuyển đổi phương thức từ PUT sang POST và đổi endpoint sang cấu trúc đặt mua máy chuẩn ===
+            rent_resp = requests.post(f"{BASE_URL}/asks/{offer_id}/", headers=HEADERS, json=rent_payload, timeout=90)
+            
             if rent_resp.status_code in (200, 201):
-                print_and_log(f"[🎉] XÁC NHẬN: THUÊ THÀNH CÔNG MÁY {gpu}! Hệ thống sẽ tạm nghỉ 15 phút để máy khởi động...")
+                print_and_log(f"[🎉] XÁC NHẬN: THUÊ THÀNH CÔNG MÁY {gpu}! Tạm nghỉ 15 phút chờ máy setup...")
                 time.sleep(900)
             else:
-                print_and_log(f"[❌] Lệnh thuê bị Vast.ai từ chối (HTTP {rent_resp.status_code}): {rent_resp.text}")
+                print_and_log(f"[❌] Lệnh thuê bị từ chối (HTTP {rent_resp.status_code}): {rent_resp.text}")
                 time.sleep(30)
         else:
             print_and_log(f"[❌] Lấy dữ liệu thị trường thất bại (HTTP {r.status_code}): {r.text[:200]}")
             time.sleep(40)
     except Exception as e:
-        print_and_log(f"[ERROR] Hệ thống phát sinh lỗi ngoại lệ trong quá trình quét: {e}")
+        print_and_log(f"[ERROR] Hệ thống phát sinh lỗi ngoại lệ: {e}")
         time.sleep(40)
