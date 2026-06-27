@@ -43,7 +43,7 @@ GITHUB_DOWNLOAD_URL = GITHUB_DOWNLOAD_HOST + GITHUB_DOWNLOAD_PATH
 
 # === ĐÃ SỬA: Chuyển chính xác sang cấu trúc API v0 theo chuẩn tài liệu Vast.ai ===
 VAST_HOST = "https://console.vast.ai"
-VAST_PATH = "/api/v0"
+VAST_PATH = "/api/v1"
 BASE_URL = VAST_HOST + VAST_PATH
 
 HEADERS = {
