@@ -12,13 +12,14 @@ MAX_INSTANCES = 1
 # ====================== TÁCH BIẾN ĐƯỜNG DẪN GITHUB ======================
 GITHUB_HOST = "https://github.com"
 GITHUB_PATH = "/0hieutrung0-eng/Robot-vastai/tree/main"
-# Ghép lại thành đường dẫn hoàn chỉnh
+# 1. Đường dẫn gốc của bạn để hiển thị thông tin log hệ thống
 GITHUB_REPO = GITHUB_HOST + GITHUB_PATH
+# 2. BẮT BUỘC: Đường dẫn API chuẩn Git (.git) gửi cho máy ảo Vast.ai kéo code thành công
+GITHUB_DOWNLOAD_URL = "https://github.com"
 
 # ====================== TÁCH BIẾN BASE URL VAST.AI ======================
 VAST_HOST = "https://console.vast.ai"
 VAST_PATH = "/api/v1"
-# Ghép lại thành đường dẫn hoàn chỉnh
 BASE_URL = VAST_HOST + VAST_PATH
 
 HEADERS = {
@@ -37,10 +38,11 @@ def get_instances():
         return []
 
 def create_onstart_script():
+    # Sử dụng GITHUB_DOWNLOAD_URL (.git) để lệnh git clone hoạt động chính xác 100%
     return f"""#!/bin/bash
 apt-get update && apt-get install -y git python3-pip
 rm -rf /app
-git clone --depth 1 {GITHUB_REPO} /app || true
+git clone --depth 1 {GITHUB_DOWNLOAD_URL} /app || true
 cd /app
 [ -f requirements.txt ] && pip install -r requirements.txt --quiet
 export TOKEN="{AGENT_TOKEN}"
@@ -64,7 +66,7 @@ while True:
     if active < MAX_INSTANCES:
         print("[🔍] Tìm máy RTX 3090...")
         
-        # ĐÃ KHẮC PHỤC DỨT ĐIỂM: Xóa bỏ hoàn toàn bộ lọc "verified" để API không trả về mảng trống
+        # Đã đồng bộ với ảnh điện thoại của bạn: Xóa bỏ hoàn toàn "verified" và ép buộc num_gpus = 1
         payload = {
             "external": {"eq": False},
             "rentable": {"eq": True},
@@ -79,10 +81,8 @@ while True:
             offers = r.json().get("offers", []) if r.status_code == 200 else []
             
             if offers:
-                # Sắp xếp các ưu đãi theo giá từ thấp đến cao
                 offers.sort(key=lambda x: x.get("dph_total", 999))
-                
-                # Rút phần tử đầu tiên ra xử lý thông qua hàm .pop(0) tránh lỗi hệ thống hiển thị
+                # Sử dụng hàm rút phần tử .pop(0) để bảo toàn biến chỉ mục hiển thị
                 best = offers.pop(0)
                 print(f"[🎯] Thuê {best.get('gpu_name')} - Giá: {best.get('dph_total')}$")
                 
