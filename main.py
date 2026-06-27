@@ -26,15 +26,16 @@ BASE_URL = VAST_HOST + VAST_PATH
 
 HEADERS = {
     "Authorization": f"Bearer {VAST_API_KEY}",
+    "Content-Type": "application/json",
     "Accept": "application/json"
 }
 
-print("[START] Robot Vast.ai - Tự động thuê GPU")
+print("[START] Robot Vast.ai - Tự động thuê GPU (Đã bọc chuỗi Query)")
 print(f"[INFO] Kho mã nguồn mục tiêu: {GITHUB_REPO}")
 
 def get_instances():
     try:
-        r = requests.get(f"{BASE_URL}/instances", headers=HEADERS, timeout=20)
+        r = requests.get(f"{BASE_URL}/instances/", headers=HEADERS, timeout=20)
         return r.json().get("instances", []) if r.status_code == 200 else []
     except:
         return []
@@ -66,52 +67,65 @@ while True:
     if active < MAX_INSTANCES:
         print("[🔍] Tìm máy RTX 3090...")
         
-        # ĐÃ SỬA DỨT ĐIỂM: Xóa hoàn toàn 'verified' và 'external' để quét sạch tất cả máy rẻ trên điện thoại của bạn
-        payload = {
+        # Tạo khối điều kiện lọc phần cứng nới lỏng tối đa để càn quét trúng máy rẻ
+        query_filter = {
             "rentable": {"eq": True},
             "rented": {"eq": False},
+            "type": "ondemand",
             "dph_total": {"lte": MAX_PRICE},
-            "gpu_name": {"contains": "RTX 3090"},
+            "gpu_name": {"in": ["RTX 3090"]},
             "num_gpus": {"gte": 1}
         }
         
+        # BẮT BUỘC: Ép khối điều kiện thành chuỗi string gán vào biến 'q' đúng tài liệu kỹ thuật
+        payload = {
+            "q": json.dumps(query_filter)
+        }
+        
         try:
-            r = requests.get(f"{BASE_URL}/bundles", headers=HEADERS, params={"q": json.dumps(payload)}, timeout=20)
+            # Gửi payload bọc chuỗi qua phương thức POST lên endpoint /bundles/
+            r = requests.post(f"{BASE_URL}/bundles/", headers=HEADERS, json=payload, timeout=20)
             
-            res_data = r.json()
-            offers = res_data.get("offers", res_data.get("results", []))
-            
-            if offers:
-                # Sắp xếp các ưu đãi theo giá từ thấp đến cao
-                offers.sort(key=lambda x: x.get("dph_total", 999))
-                best = offers.pop(0)
-                print(f"[🎯] Thuê {best.get('gpu_name')} - Giá: {best.get('dph_total')}$")
+            if r.status_code == 200:
+                res_data = r.json()
+                offers = res_data.get("offers", res_data.get("results", []))
                 
-                rent_payload = {
-                    "image": "nvidia/cuda:11.7.1-runtime-ubuntu22.04",
-                    "disk": 40.0,
-                    "runtype": "ssh_direct",
-                    "onstart": create_onstart_script()
-                }
-                
-                rent_resp = requests.put(
-                    f"{BASE_URL}/instances/{best['id']}/", 
-                    headers={"Authorization": f"Bearer {VAST_API_KEY}", "Content-Type": "application/json"}, 
-                    json=rent_payload, 
-                    timeout=30
-                )
-                
-                if rent_resp.status_code in (200, 201):
-                    print("[🎉] THUÊ THÀNH CÔNG!")
-                    time.sleep(900)
+                if offers:
+                    # Sắp xếp các ưu đãi theo giá từ thấp đến cao
+                    offers.sort(key=lambda x: x.get("dph_total", 999))
+                    best = offers.pop(0)
+                    print(f"[🎯] Thuê {best.get('gpu_name')} - Giá: {best.get('dph_total')}$")
+                    
+                    rent_payload = {
+                        "image": "nvidia/cuda:11.7.1-runtime-ubuntu22.04",
+                        "disk": 40.0,
+                        "runtype": "ssh_direct",
+                        "onstart": create_onstart_script()
+                    }
+                    
+                    # Gọi chuẩn endpoint PUT /instances/{id}/ để đặt thuê máy ảo mới
+                    rent_resp = requests.put(
+                        f"{BASE_URL}/instances/{best['id']}/", 
+                        headers=HEADERS, 
+                        json=rent_payload, 
+                        timeout=30
+                    )
+                    
+                    if rent_resp.status_code in (200, 201):
+                        print("[🎉] THUÊ THÀNH CÔNG!")
+                        time.sleep(900)
+                    else:
+                        print(f"[❌] Lỗi đặt thuê từ Vast.ai (Mã lỗi: {rent_resp.status_code}): {rent_resp.text}")
+                        time.sleep(30)
                 else:
-                    print(f"[❌] Lỗi đặt thuê từ Vast.ai: {rent_resp.status_code} - {rent_resp.text}")
-                    time.sleep(30)
+                    print(f"[⏳] Không có máy giá dưới {MAX_PRICE}$. Thử lại sau 1 phút...")
+                    time.sleep(60)
             else:
-                print(f"[⏳] Không có máy giá dưới {MAX_PRICE}$. Thử lại sau 1 phút...")
+                print(f"[❌] Máy chủ APIbundles phản hồi mã lỗi: {r.status_code} - {r.text}. Thử lại sau 1 phút...")
                 time.sleep(60)
+                
         except Exception as e:
-            print(f"[ERROR] Lỗi trong quá trình xử lý: {e}")
+            print(f"[ERROR] Lỗi hệ thống: {e}")
             time.sleep(60)
     else:
         time.sleep(120)
