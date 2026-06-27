@@ -47,14 +47,7 @@ def print_and_log(msg):
     SYSTEM_STATUS = msg
     print(msg, flush=True)
 
-def log_api_error(action_name, response):
-    print_and_log(f"[❌ LỖI CHI TIẾT - {action_name}]")
-    print(f"  -> URL đã gọi: {response.url}", flush=True)
-    print(f"  -> HTTP Status Code: {response.status_code}", flush=True)
-    print(f"  -> Nội dung phản hồi: {response.text}", flush=True)
-    print("-" * 60, flush=True)
-
-print_and_log("[START] Robot Vast.ai v1 - Fix Endpoint Bắt Máy Chợ Đen")
+print_and_log("[START] Robot Vast.ai v1 - Tự Động Định Tuyến Tối Hậu (Fallback Engine)")
 
 if not VAST_API_KEY or not AGENT_TOKEN:
     print_and_log("[❌] LỖI CẤU HÌNH: Thiếu VAST_API_KEY hoặc AGENT_TOKEN!")
@@ -68,7 +61,6 @@ if not VAST_API_KEY or not AGENT_TOKEN:
 def get_instances():
     try:
         print_and_log("[📡] Đang kiểm tra danh sách máy ĐÃ THUÊ trên tài khoản...")
-        # Lấy danh sách máy ĐÃ THUÊ của riêng mình
         url = f"{BASE_URL}/instances/?owner=me&api_key={VAST_API_KEY}"
         r = requests.get(url, headers=HEADERS, timeout=20)
 
@@ -80,7 +72,6 @@ def get_instances():
             print_and_log(f"[📊] Số máy đang có trong tài khoản: {len(instances_list)} máy.")
             return instances_list
         else:
-            log_api_error("LẤY DANH SÁCH MÁY ĐÃ THUÊ", r)
             return []
     except Exception as e:
         print_and_log(f"[ERROR] Ngoại lệ hàm get_instances: {e}")
@@ -109,8 +100,11 @@ sleep infinity"""
 
 
 # ==============================================================================
-# PHẦN 3: VÒNG LẶP SĂN MÁY QUA ENDPOINT CHỢ CÔNG KHAI (/ASKS/)
+# PHẦN 3: VÒNG LẶP SĂN MÁY ĐA PHƯƠNG THỨC VÀ ĐA ENDPOINT
 # ==============================================================================
+# Chuỗi lọc JSON phẳng mã hóa chuẩn để test
+encoded_q = "%7B%22verified%22%3Atrue%2C%22external%22%3Afalse%2C%22rentable%22%3Atrue%2C%22rented%22%3Afalse%7D"
+
 while True:
     instances = get_instances()
     ACTIVE_STATUS = {"running", "loading", "creating", "starting"}
@@ -144,95 +138,103 @@ while True:
             time.sleep(60)
         continue
 
-    print_and_log(f"[🔍] Đang quét thị trường tìm kiếm ưu đãi RTX 3090 công khai...")
+    print_and_log(f"[🔍] Bắt đầu chu kỳ quét thị trường thông minh...")
     
+    # DANH SÁCH CÁC ĐƯỜNG ĐI CHIẾN LƯỢC SẼ ĐƯỢC THỬ NGHIỆM LIÊN TỤC
+    strategies = [
+        {"name": "GET /bundles (Dạng mới không dấu gạch chéo)", "method": "GET", "url": f"{BASE_URL}/bundles?q={encoded_q}&api_key={VAST_API_KEY}"},
+        {"name": "GET /bundles/ (Dạng có dấu gạch chéo)", "method": "GET", "url": f"{BASE_URL}/bundles/?q={encoded_q}&api_key={VAST_API_KEY}"},
+        {"name": "GET /asks (Cổng phân phối thô)", "method": "GET", "url": f"{BASE_URL}/asks?q={encoded_q}&api_key={VAST_API_KEY}"},
+        {"name": "GET /machines (Cổng phụ)", "method": "GET", "url": f"{BASE_URL}/machines?api_key={VAST_API_KEY}"}
+    ]
+    
+    offers = []
+    success_strategy_name = None
+    
+    for strg in strategies:
+        try:
+            print_and_log(f" 📡 Đang thử nghiệm chiến lược: {strg['name']}...")
+            if strg["method"] == "GET":
+                r = requests.get(strg["url"], headers=HEADERS, timeout=15)
+            
+            if r.status_code == 200:
+                res_data = r.json()
+                # Bóc tách mảng từ mọi cấu trúc key có thể có
+                if isinstance(res_data, dict):
+                    offers = res_data.get("offers", res_data.get("asks", res_data.get("machines", res_data.get("results", res_data.get("instances", [])))))
+                elif isinstance(res_data, list):
+                    offers = res_data
+                    
+                if offers and isinstance(offers, list):
+                    success_strategy_name = strg["name"]
+                    print_and_log(f" [🎯 SUCCESS] Kết nối thành công bằng chiến lược: {success_strategy_name}!")
+                    break
+            else:
+                print(f"   -> Thất bại (Mã phản hồi: {r.status_code})", flush=True)
+        except Exception as e:
+            print(f"   -> Lỗi kết nối ngoại lệ: {e}", flush=True)
+            
+    if not offers:
+        print_and_log("[⚠️] Toàn bộ chiến lược kết nối API đều thất bại hoặc thị trường trống rỗng. Thử lại sau 30 giây...")
+        time.sleep(30)
+        continue
+        
+    # SÀNG LỌC VÀ LỌC GIÁ BẰNG PYTHON ENGINE TẠI CLIENT
+    valid_offers = []
+    for o in offers:
+        if not isinstance(o, dict):
+            continue
+            
+        o_id = o.get("id", o.get("machine_id"))
+        if o_id is None:
+            continue
+            
+        price = float(o.get("dph_total", o.get("price", 999)))
+        gpu_name_str = str(o.get("gpu_name", ""))
+        
+        # Lọc chính xác máy RTX 3090 dựa vào chuỗi ký tự và giá tối đa
+        if "3090" in gpu_name_str and price <= MAX_PRICE:
+            valid_offers.append({
+                "id": o_id,
+                "gpu_name": gpu_name_str,
+                "price": price
+            })
+            
+    print_and_log(f"[📊] Kết quả xử lý: Tìm thấy {len(valid_offers)} máy RTX 3090 phù hợp với giá trần <= {MAX_PRICE}$")
+    
+    if not valid_offers:
+        time.sleep(30)
+        continue
+        
+    # Sắp xếp lấy máy có giá thành tối ưu nhất
+    valid_offers.sort(key=lambda x: x["price"])
+    best_machine = valid_offers[0]
+    
+    print_and_log(f"[🎯] CHỌN ĐƯỢC MÁY RẺ NHẤT: ID {best_machine['id']} - Tên: {best_machine['gpu_name']} - Giá {best_machine['price']}$/giờ. Tiến hành thuê...")
+    
+    rent_payload = {
+        "image": "nvidia/cuda:12.1.1-runtime-ubuntu22.04",
+        "disk": 40.0,
+        "runtype": "ssh_direct",
+        "onstart": create_onstart_script()
+    }
+    
+    # Thực hiện lệnh thuê máy POST trực tiếp
     try:
-        # THAY ĐỔI QUYẾT ĐỊNH: Gọi trực tiếp vào cổng /asks/ để lấy danh sách máy đang rao bán công khai
-        # Kết hợp bộ lọc query string chuẩn hóa để ép server trả về đúng danh sách thị trường
-        market_url = (
-            f"{BASE_URL}/asks/?"
-            "q=%7B%22verified%22%3A%7B%22eq%22%3Atrue%7D%2C%22external%22%3A%7B%22eq%22%3Afalse%7D%2C"
-            "%22rentable%22%3A%7B%22eq%22%3Atrue%7D%2C%22rented%22%3A%7B%22eq%22%3Afalse%7D%7D"
-            f"&api_key={VAST_API_KEY}"
+        rent_resp = requests.post(
+            f"{BASE_URL}/asks/{best_machine['id']}/",
+            headers=HEADERS,
+            params={"api_key": VAST_API_KEY},
+            json=rent_payload,
+            timeout=60
         )
         
-        r = requests.get(market_url, headers=HEADERS, timeout=30)
-        
-        if r.status_code == 200:
-            res_data = r.json()
-            
-            # Trích xuất mảng danh sách máy chào thuê
-            offers = []
-            if isinstance(res_data, dict):
-                offers = res_data.get("asks", res_data.get("offers", res_data.get("instances", res_data.get("results", []))))
-            elif isinstance(res_data, list):
-                offers = res_data
-                
-            if not offers:
-                print_and_log("[⚠️] Hệ thống trả về danh sách trống. Thử lại sau 30 giây...")
-                time.sleep(30)
-                continue
-                
-            # Duyệt mảng và sàng lọc bằng Python Client để đảm bảo độ chính xác
-            valid_offers = []
-            for o in offers:
-                if not isinstance(o, dict):
-                    continue
-                
-                o_id = o.get("id", o.get("machine_id"))
-                if o_id is None:
-                    continue
-                
-                # Trích xuất giá tiền và tên GPU
-                price = float(o.get("dph_total", o.get("price", 999)))
-                gpu_name_str = str(o.get("gpu_name", ""))
-                
-                # Lọc thủ công: Phải chứa cụm từ 3090 và giá nhỏ hơn hoặc bằng giới hạn MAX_PRICE
-                if "3090" in gpu_name_str and price <= MAX_PRICE:
-                    valid_offers.append({
-                        "id": o_id,
-                        "gpu_name": gpu_name_str,
-                        "price": price
-                    })
-            
-            print_and_log(f"[📊] Kết quả: Tìm thấy {len(valid_offers)} máy RTX 3090 thỏa mãn giá <= {MAX_PRICE}$")
-            
-            if not valid_offers:
-                time.sleep(30)
-                continue
-                
-            # Sắp xếp để ưu tiên chọn máy có chi phí rẻ nhất
-            valid_offers.sort(key=lambda x: x["price"])
-            best_machine = valid_offers[0]
-            
-            print_and_log(f"[🎯] CHỌN ĐƯỢC MÁY RẺ NHẤT: ID {best_machine['id']} - Giá {best_machine['price']}$/giờ. Tiến hành thuê...")
-            
-            rent_payload = {
-                "image": "nvidia/cuda:12.1.1-runtime-ubuntu22.04",
-                "disk": 40.0,
-                "runtype": "ssh_direct",
-                "onstart": create_onstart_script()
-            }
-            
-            # Thực hiện đặt lệnh thuê máy
-            rent_resp = requests.post(
-                f"{BASE_URL}/asks/{best_machine['id']}/",
-                headers=HEADERS,
-                params={"api_key": VAST_API_KEY},
-                json=rent_payload,
-                timeout=60
-            )
-            
-            if rent_resp.status_code in (200, 201):
-                print_and_log(f"[🎉] THUÊ MÁY THÀNH CÔNG! Chờ máy thiết lập cài đặt trong 15 phút...")
-                time.sleep(900)
-            else:
-                log_api_error("LỆNH THUÊ MÁY (POST /asks/)", rent_resp)
-                time.sleep(20)
+        if rent_resp.status_code in (200, 201):
+            print_and_log(f"[🎉] THUÊ MÁY THÀNH CÔNG! Chờ máy thiết lập cài đặt...")
+            time.sleep(900)
         else:
-            log_api_error("QUÉT THỊ TRƯỜNG (/asks/)", r)
-            time.sleep(30)
-            
+            print_and_log(f"[❌] Lỗi khi gửi lệnh thuê máy (Mã: {rent_resp.status_code}): {rent_resp.text}")
+            time.sleep(20)
     except Exception as e:
-        print_and_log(f"[ERROR] Lỗi luồng hệ thống: {e}")
-        time.sleep(30)
+        print_and_log(f"[ERROR] Ngoại lệ luồng thuê máy: {e}")
+        time.sleep(20)
