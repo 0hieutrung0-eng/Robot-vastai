@@ -1,109 +1,159 @@
 import os
-import requests
 import time
-import threading
-from fastapi import FastAPI
-import uvicorn
+import json
+import subprocess
+import requests
+import queue
+from threading import Thread
+from flask import Flask, request, jsonify
 
-app = FastAPI()
-SYSTEM_STATUS = "Robot đang chạy..."
+# =====================================================================
+# ⚙️ CẤU HÌNH HỆ THỐNG (THAY LINK WEBHOOK CỦA BẠN VÀO ĐÂY)
+# =====================================================================
+WEBHOOK_LUONG_4_URL = "DÁN_ĐƯỜNG_LINK_WEBHOOK_LUỒNG_4_CỦA_BẠN_VÀO_ĐÂY"
+TOTAL_SCENES = 100  
 
-@app.get("/")
-def read_root():
-    return {"status": "active", "message": SYSTEM_STATUS, "time": time.strftime("%Y-%m-%d %H:%M:%S")}
+WORKSPACE = "/workspace"
+RENDER_DIR = os.path.join(WORKSPACE, "render_output")
+VOICE_DIR = os.path.join(WORKSPACE, "voice_output")
+FINAL_DIR = os.path.join(WORKSPACE, "final_scenes")
 
-def run_web_server():
-    uvicorn.run(app, host="0.0.0.0", port=7860, log_level="warning")
+for folder in [RENDER_DIR, VOICE_DIR, FINAL_DIR]:
+    os.makedirs(folder, exist_ok=True)
 
-threading.Thread(target=run_web_server, daemon=True).start()
+# Khởi tạo Hàng đợi xử lý tuần tự (Xếp hàng chống sập GPU)
+task_queue = queue.Queue()
 
-# ====================== CONFIG ======================
-VAST_API_KEY = os.getenv("VAST_API_KEY", "").strip()
-AGENT_TOKEN = os.getenv("AGENT_TOKEN", "").strip()
+print("[INFO] Hệ thống MasterBot Film AI với Hàng đợi tuần tự đang chạy...")
 
-MAX_PRICE = 0.25
-MAX_INSTANCES = 1
-BASE_URL = "https://console.vast.ai/api/v0"
+# =====================================================================
+# 🛠️ LUỒNG XỬ LÝ TUẦN TỰ KHÉP KÍN (WORKER THREAD)
+# =====================================================================
+def process_queue_worker():
+    """Luồng chạy ngầm bốc từng cảnh ra xử lý trọn gói, xong cảnh này mới làm cảnh sau"""
+    processed_count = 0
+    
+    while True:
+        task = task_queue.get()
+        if task is None:
+            break
+            
+        scene_number = task["scene_number"]
+        ai_video_prompt = task["ai_video_prompt"]
+        dialogue_vietnamese = task["dialogue_vietnamese"]
+        
+        print(f"\n[QUEUE] 🎬 Bắt đầu xử lý trọn gói Cảnh {scene_number}/{TOTAL_SCENES}...")
+        
+        audio_path = os.path.join(VOICE_DIR, f"canh_{scene_number}.mp3")
+        video_path = os.path.join(RENDER_DIR, f"canh_{scene_number}.mp4")
+        scene_finished = os.path.join(FINAL_DIR, f"canh_{scene_number}_hoanchinh.mp4")
 
-HEADERS = {
-    "Authorization": f"Bearer {VAST_API_KEY}",
-    "Content-Type": "application/json",
-    "User-Agent": "Mozilla/5.0"
-}
+        # --- BƯỚC 1: SINH GIỌNG NÓI TIẾNG VIỆT (KOKORO AI) ---
+        voice_cmd = ["kokoro-tts", "--text", dialogue_vietnamese, "--lang", "vi", "--voice", "v_south_female", "--output", audio_path]
+        try:
+            subprocess.run(voice_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print(f"[✔️ 1. VOICE] Đã tạo xong file Audio cho Cảnh {scene_number}")
+        except Exception as e:
+            print(f"[❌ VOICE ERROR] Lỗi tạo tiếng Cảnh {scene_number}: {e}")
 
-GITHUB_REPO = "https://github.com/0hieutrung0-eng/Robot-vastai.git"   # Sửa nếu cần
+        # --- BƯỚC 2: GỬI LỆNH RENDER VIDEO SANG COMFYUI ---
+        comfy_payload = {"prompt_text": ai_video_prompt, "save_name": f"canh_{scene_number}"}
+        try:
+            # Gửi lệnh vào API của ComfyUI (Giả định ComfyUI chạy cổng nội bộ 8189)
+            requests.post("http://127.0.0.1:8189/prompt", json=comfy_payload, timeout=10)
+            print(f"[COMFYUI] Đã đẩy lệnh render vào ComfyUI. Chờ sinh file video...")
+            
+            # Vòng lặp tối ưu: Treo luồng chờ cho đến khi thấy file video thật xuất hiện trên ổ cứng
+            while not os.path.exists(video_path):
+                time.sleep(3)
+            print(f"[✔️ 2. VIDEO] Đã tìm thấy file Video từ ComfyUI cho Cảnh {scene_number}")
+        except Exception as e:
+            print(f"[❌ COMFYUI ERROR] Cảnh {scene_number} lỗi kết nối API: {e}")
 
-def print_and_log(msg):
-    global SYSTEM_STATUS
-    SYSTEM_STATUS = msg
-    print(msg, flush=True)
-
-if not VAST_API_KEY or not AGENT_TOKEN:
-    print_and_log("[❌] Thiếu API key!")
-    while True: time.sleep(3600)
-
-def create_onstart_script():
-    return f"""#!/bin/bash
-echo "=== OnStart Started $(date) ===" > /root/agent.log
-apt-get update && apt-get install -y git python3-pip curl
-git config --global credential.helper ''
-git config --global --add safe.directory /app
-rm -rf /app
-git clone --depth 1 {GITHUB_REPO} /app
-cd /app
-[ -f requirements.txt ] && pip install -r requirements.txt --no-cache-dir -q
-export TOKEN="{AGENT_TOKEN}"
-nohup python3 main.py > agent.log 2>&1 &
-sleep infinity
-"""
-
-print_and_log("[🚀] Robot Vast.ai - HF Spaces Ready")
-
-while True:
-    try:
-        # Tìm máy
-        search_payload = {
-            "rentable": {"eq": True},
-            "rented": {"eq": False},
-            "dph_total": {"lte": MAX_PRICE},
-            "gpu_name": {"in": ["RTX 3090", "RTX 3090 Ti"]},
-            "limit": 5
-        }
-
-        resp = requests.post(f"{BASE_URL}/bundles/", headers=HEADERS, json=search_payload, timeout=20)
-
-        if resp.status_code == 200:
-            offers = resp.json().get("offers", [])
-            if offers:
-                best = min(offers, key=lambda x: float(x.get("dph_total", 999)))
-                price = float(best.get("dph_total", 0))
-                print_and_log(f"[🎯] Thuê {best.get('gpu_name')} - ${price}/h (ID: {best['id']})")
-
-                rent_payload = {
-                    "image": "nvidia/cuda:12.4.1-runtime-ubuntu22.04",
-                    "disk": 50,
-                    "runtype": "ssh_direct",
-                    "onstart": create_onstart_script()
-                }
-
-                rent_resp = requests.put(
-                    f"{BASE_URL}/asks/{best['id']}/",
-                    headers=HEADERS,
-                    json=rent_payload,
-                    timeout=60
-                )
-
-                if rent_resp.status_code in (200, 201):
-                    print_and_log("[🎉] THUÊ THÀNH CÔNG!")
-                    time.sleep(900)
-                else:
-                    print_and_log(f"[❌] Thuê lỗi: {rent_resp.status_code}")
-            else:
-                print_and_log("[⚠️] Không có máy phù hợp")
+        # --- BƯỚC 3: GHÉP HÌNH VỚI TIẾNG BẰNG FFMPEG (CUỐN CHIẾU) ---
+        if os.path.exists(video_path) and os.path.exists(audio_path):
+            ffmpeg_cmd = ["ffmpeg", "-y", "-i", video_path, "-i", audio_path, "-c:v", "libx264", "-c:a", "aac", "-shortest", scene_finished]
+            try:
+                subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                print(f"[✔️ 3. MATCH] Đã xuất bản phân cảnh khớp tiếng: {scene_finished}")
+                processed_count += 1
+            except Exception as e:
+                print(f"[❌ FFMPEG ERROR] Lỗi ghép trục Cảnh {scene_number}: {e}")
         else:
-            print_and_log(f"[ERROR] Search: {resp.status_code}")
+            print(f"[❌ MATCH FAILED] Thiếu nguyên liệu hình/tiếng của Cảnh {scene_number}, bỏ qua ghép nối.")
+        
+        # Giải phóng phần tử trong hàng đợi
+        task_queue.task_done()
+        
+        # KIỂM TRA MỐC HOÀN THÀNH: Đủ 100 cảnh thì tự động kích hoạt gộp phim tổng
+        if processed_count == TOTAL_SCENES:
+            trigger_build_final_movie()
 
+# =====================================================================
+# 🎛️ NỐI PHIM TỔNG & TẢI LÊN GOOGLE DRIVE
+# =====================================================================
+def trigger_build_final_movie():
+    print("\n[🔥 SYSTEM] Đã thu thập đủ 100 phân cảnh sạch! Tiến hành nối chuỗi thành phim 10 phút...")
+    
+    list_file_path = os.path.join(WORKSPACE, "movie_list.txt")
+    with open(list_file_path, "w") as f:
+        for i in range(1, TOTAL_SCENES + 1):
+            f.write(f"file '{FINAL_DIR}/canh_{i}_hoanchinh.mp4'\n")
+            
+    video_name = f"Phim_AI_10_Phut_{int(time.time())}.mp4"
+    final_movie_path = os.path.join(WORKSPACE, video_name)
+    
+    concat_cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file_path, "-c", "copy", final_movie_path]
+    try:
+        subprocess.run(concat_cmd, check=True)
+        print(f"[✔️ MOVIE DONE] Phim tổng đã xuất bản tại: {final_movie_path}")
+        
+        # Tải thẳng lên Google Drive
+        print("[DRIVE] Đang đẩy video lên trạm trung chuyển Google Drive...")
+        os.system(f"gdrive upload {final_movie_path} --hide-progress")
+        print("[✔️ DRIVE SUCCESS] Video đã nằm an toàn trên Google Drive!")
+        
+        # Phát tín hiệu về Luồng 4 trên Make để up YouTube và hủy máy
+        trigger_make_webhook(video_name)
     except Exception as e:
-        print_and_log(f"[ERROR] {e}")
+        print(f"[❌ FATAL] Lỗi quy trình xuất bản phim tổng hợp: {e}")
 
-    time.sleep(40)
+def trigger_make_webhook(video_name):
+    print("[🔥 DESTROY] Phát tín hiệu hoàn thành về Luồng 4 trên Make.com...")
+    try:
+        instance_id = os.environ.get("VAST_CONTAINERLABEL", "unknown")
+        payload = {
+            "status": "render_done",
+            "video_name": video_name,
+            "instance_id": instance_id
+        }
+        requests.post(WEBHOOK_LUONG_4_URL, json=payload, timeout=30)
+        print("[✔️ SYSTEM] Đã bắn Webhook thành công! Máy ảo sẵn sàng nhận lệnh xóa.")
+    except Exception as e:
+        print(f"[❌ WEBHOOK ERROR] Không thể phát tín hiệu hủy máy: {e}")
+
+# =====================================================================
+# 🌐 CỔNG API TIẾP NHẬN 100 CẢNH LIÊN THANH TỪ MAKE.COM
+# =====================================================================
+app = Flask(__name__)
+
+@app.route('/api/queue', methods=['POST'])
+def receive_scene_from_make():
+    data = request.json
+    if not data:
+        return jsonify({"status": "error", "message": "No data received"}), 400
+        
+    # Đón nhận dữ liệu tốc độ cao từ Make và xếp thẳng vào hàng đợi an toàn
+    task_queue.put({
+        "scene_number": data.get("scene_number"),
+        "ai_video_prompt": data.get("ai_video_prompt"),
+        "dialogue_vietnamese": data.get("dialogue_vietnamese")
+    })
+    return jsonify({"status": "received"}), 200
+
+if __name__ == "__main__":
+    # Khởi động luồng xử lý tuần tự chạy ngầm độc lập
+    Thread(target=process_queue_worker, daemon=True).start()
+    
+    # Mở cổng 8188 nhận kịch bản từ Make.com bắn sang
+    app.run(host="0.0.0.0", port=8188, debug=False)
