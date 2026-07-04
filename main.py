@@ -10,7 +10,7 @@ from flask import Flask, request, jsonify
 # =====================================================================
 # ⚙️ CẤU HÌNH HỆ THỐNG (THAY LINK WEBHOOK CỦA BẠN VÀO ĐÂY)
 # =====================================================================
-WEBHOOK_LUONG_4_URL = "DÁN_ĐƯỜNG_LINK_WEBHOOK_LUỒNG_4_CỦA_BẠN_VÀO_ĐÂY"
+WEBHOOK_LUONG_4_URL = "https://hook.eu1.make.com/0v3e39krh4bm8ydd6gyhl3uvf1rwahsm"
 TOTAL_SCENES = 100  
 
 WORKSPACE = "/workspace"
